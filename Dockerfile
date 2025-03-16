@@ -1,37 +1,38 @@
-FROM golang:1.24-alpine
+FROM golang:1.24
 
-# Install Node.js and npm
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-RUN apt-get update && apt-get install -y nodejs
+# Installer Node.js et npm
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get update && apt-get install -y nodejs
 
-# Install Chromium
+# Installer Chromium et quelques polices
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for Chromium
+# Définir les variables d'environnement pour Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV CHROME_NO_SANDBOX=1
 
-# Set working directory
+# Définir le répertoire de travail
 WORKDIR /app
 
-# Copy and download dependencies
+# Copier les dépendances et télécharger les modules Go
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
+# Copier le code source
 COPY . .
 
-# Install Marp CLI
+# Installer Marp CLI
 RUN npm install @marp-team/marp-cli
 
-# Build the application
+# Compiler l'application
 RUN go build -o main .
 
-# Expose the port
+# Exposer le port
 EXPOSE 8080
 
-# Command to run the application
+# Commande de lancement de l'application
 CMD ["./main"]
