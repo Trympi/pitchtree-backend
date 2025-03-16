@@ -1,0 +1,51 @@
+# Binaires compilés
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+
+# Fichiers de test
+*.test
+*.tmp
+
+# Fichiers de sortie de couverture de code
+*.out
+*.prof
+
+# Dépendances
+/vendor/
+/Godeps/
+
+# Fichiers temporaires
+/temp/
+/tmp/
+
+# Fichiers de sortie
+/outputs/
+/pdfs/
+
+# Fichiers d'environnement
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Fichiers de configuration IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers de log
+*.log
+logs/
+
+# Fichiers spécifiques à Go
+go.work
