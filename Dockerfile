@@ -1,38 +1,57 @@
-FROM golang:1.24
+# Étape de build
+FROM golang:1.24-alpine AS builder
 
-# Installer Node.js et npm
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get update && apt-get install -y nodejs
-
-# Installer Chromium et quelques polices
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst \
-    && rm -rf /var/lib/apt/lists/*
-
-# Définir les variables d'environnement pour Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV CHROME_NO_SANDBOX=1
-
-# Définir le répertoire de travail
 WORKDIR /app
 
-# Copier les dépendances et télécharger les modules Go
+# Copier les fichiers go.mod et go.sum
 COPY go.mod go.sum ./
+
+# Télécharger les dépendances
 RUN go mod download
 
 # Copier le code source
 COPY . .
 
-# Installer Marp CLI
-RUN npm install @marp-team/marp-cli
+# Compiler l'application (statique)
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
-# Compiler l'application
-RUN go build -o main .
+# Étape finale
+FROM alpine:3.19
 
-# Exposer le port
+WORKDIR /app
+
+# Installer les dépendances d'exécution nécessaires
+RUN apk update && apk add --no-cache \
+    ca-certificates \
+    nodejs \
+    npm \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    font-noto-emoji \
+    && mkdir -p /tmp/cmu-fonts /usr/share/fonts/truetype/cmu \
+    && wget -q -O /tmp/cm-unicode.tar.xz "https://sourceforge.net/projects/cm-unicode/files/cm-unicode/0.7.0/cm-unicode-0.7.0-ttf.tar.xz/download" \
+    && tar -xf /tmp/cm-unicode.tar.xz -C /tmp/cmu-fonts \
+    && cp /tmp/cmu-fonts/cm-unicode-0.7.0/*.ttf /usr/share/fonts/truetype/cmu/ \
+    && fc-cache -f \
+    && rm -rf /tmp/cmu-fonts /tmp/cm-unicode.tar.xz
+
+# Configurer les variables d'environnement pour Chromium et Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV CHROME_DISABLE_GPU=1
+ENV CHROME_NO_SANDBOX=1
+
+# Installer Marp CLI globalement
+RUN npm install -g @marp-team/marp-cli
+
+# Copier l'exécutable depuis l'étape de build
+COPY --from=builder /app/main .
+
+# Exposer le port de l'application
 EXPOSE 8080
 
-# Commande de lancement de l'application
+# Lancer l'application
 CMD ["./main"]
