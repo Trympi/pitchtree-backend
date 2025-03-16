@@ -124,11 +124,16 @@ var availableThemes = map[string]bool{
 }
 
 func main() {
+
+	if err := godotenv.Load(); err != nil {
+		log.Println("Aucun fichier .env trouvé, chargement des variables d'environnement par défaut.")
+	}
+
 	r := gin.Default()
 
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
 	// Setup CORS
@@ -176,8 +181,7 @@ func main() {
 		})
 	})
 
-	// Start server
-	r.Run(":8080")
+	r.Run(":" + port)
 }
 
 // Return available themes
