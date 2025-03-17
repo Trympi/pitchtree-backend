@@ -30,6 +30,7 @@ type ProgressUpdate struct {
 	CurrentStep int    `json:"currentStep"`           // Index de l'étape actuelle (0 à n-1)
 	Message     string `json:"message"`               // Message décrivant l'étape (ex: "Initializing generation...")
 	DownloadUrl string `json:"downloadUrl,omitempty"` // URL disponible en cas de succès
+	ViewUrl     string `json:"viewUrl,omitempty"`     // URL pour visualiser la présentation HTML
 }
 
 type PitchDeckData struct {
@@ -81,10 +82,10 @@ type PitchDeckData struct {
 	ContactInfo  ContactInfo `json:"contactInfo"`
 	KeyTakeaways string      `json:"keyTakeaways"`
 
-	// Step 10: File Uploads
-	CompanyLogo bool `json:"companyLogo"`
-	TeamPhoto   bool `json:"teamPhoto"`
-	ProductDemo bool `json:"productDemo"`
+	// Step 10: File Uploads - Modified to store image paths instead of booleans
+	CompanyLogo string `json:"companyLogo"` // Path to the company logo file
+	TeamPhoto   string `json:"teamPhoto"`   // Path to the team photo file
+	ProductDemo string `json:"productDemo"` // Path to the product demo image/screenshot
 
 	// Theme Selection
 	Theme string `json:"theme"`
@@ -124,7 +125,6 @@ var availableThemes = map[string]bool{
 }
 
 func main() {
-
 	if err := godotenv.Load(); err != nil {
 		log.Println("Aucun fichier .env trouvé, chargement des variables d'environnement par défaut.")
 	}
@@ -146,14 +146,23 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
+	// Create necessary directories
+	os.MkdirAll("temp", os.ModePerm)
+	os.MkdirAll("outputs", os.ModePerm)
+	os.MkdirAll("uploads", os.ModePerm)
+
 	// Serve static files
 	r.Static("/static", "./static")
 	r.Static("/download", "./outputs")
 	r.Static("/pdfs", "./outputs")
+	r.Static("/uploads", "./uploads")
 
 	// API Endpoints
 	r.POST("/api/generate-pitch-deck", generatePitchDeck)
 	r.GET("/api/available-themes", getAvailableThemes)
+
+	// New endpoint for image uploads
+	r.POST("/api/upload-image", uploadImage)
 
 	r.GET("/api/progress/:deckId", func(c *gin.Context) {
 		deckID := c.Param("deckId")
@@ -181,7 +190,34 @@ func main() {
 		})
 	})
 
+	setupHtmlRoute(r)
+
 	r.Run(":" + port)
+}
+
+func setupHtmlRoute(r *gin.Engine) {
+	// Add endpoint to view HTML presentation
+	r.GET("/view/:deckId", func(c *gin.Context) {
+		deckID := c.Param("deckId")
+		htmlFilePath := filepath.Join("outputs", deckID+".html")
+
+		// Check if the HTML file exists
+		if _, err := os.Stat(htmlFilePath); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Presentation not found"})
+			return
+		}
+
+		// Read the HTML file
+		htmlContent, err := os.ReadFile(htmlFilePath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read presentation"})
+			return
+		}
+
+		// Serve the HTML content
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, string(htmlContent))
+	})
 }
 
 // Return available themes
@@ -193,6 +229,51 @@ func getAvailableThemes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"themes": themes,
 	})
+}
+
+// New function for handling image uploads
+func uploadImage(c *gin.Context) {
+	// Get the file from the request
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No image file provided"})
+		return
+	}
+
+	// Check file type
+	if !isValidImageType(file.Filename) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid image format. Only jpg, jpeg, png, gif, and svg are allowed"})
+		return
+	}
+
+	// Generate a unique filename to prevent collisions
+	filename := uuid.New().String() + filepath.Ext(file.Filename)
+	filePath := filepath.Join("uploads", filename)
+
+	// Save the file
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		return
+	}
+
+	// Return the file path (relative to root) for the client to use
+	c.JSON(http.StatusOK, gin.H{
+		"path": "/uploads/" + filename,
+		"url":  "/uploads/" + filename,
+	})
+}
+
+// Helper function to check if the uploaded file is a valid image type
+func isValidImageType(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	validExts := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".gif":  true,
+		".svg":  true,
+	}
+	return validExts[ext]
 }
 
 func generatePitchDeck(c *gin.Context) {
@@ -227,6 +308,25 @@ func generatePitchDeck(c *gin.Context) {
 	})
 }
 
+// func convertMarkdownToHTML(mdFilePath string, outputPath string) error {
+// 	args := []string{
+// 		"@marp-team/marp-cli",
+// 		mdFilePath,
+// 		"--html",
+// 		"--output", outputPath,
+// 		"--allow-local-files",
+// 	}
+// 	cmd := exec.Command("npx", args...)
+// 	var stdout, stderr bytes.Buffer
+// 	cmd.Stdout = &stdout
+// 	cmd.Stderr = &stderr
+// 	if err := cmd.Run(); err != nil {
+// 		log.Printf("Error converting to HTML: %v, stderr: %s", err, stderr.String())
+// 		return err
+// 	}
+// 	return nil
+// }
+
 func processPitchDeck(data PitchDeckData, deckID string) {
 	progressMu.RLock()
 	progressChan, exists := progressChannels[deckID]
@@ -243,59 +343,90 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 		Message:     "Initializing generation...",
 	})
 
-	// Étape 1 : Traitement du contenu
+	// Create a directory for this specific deck's resources
+	deckDir := filepath.Join("temp", deckID)
+	os.MkdirAll(deckDir, os.ModePerm)
+
+	// Étape 1 : Prep images if provided
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "processing",
 		CurrentStep: 1,
+		Message:     "Processing images...",
+	})
+
+	// Copy any provided images to the deck's directory for proper inclusion in the markdown
+	imagePaths := map[string]string{}
+	if data.CompanyLogo != "" && strings.HasPrefix(data.CompanyLogo, "/uploads/") {
+		destPath := copyImageToTemp(data.CompanyLogo, deckDir, "logo")
+		if destPath != "" {
+			imagePaths["logo"] = destPath
+		}
+	}
+
+	if data.TeamPhoto != "" && strings.HasPrefix(data.TeamPhoto, "/uploads/") {
+		destPath := copyImageToTemp(data.TeamPhoto, deckDir, "team")
+		if destPath != "" {
+			imagePaths["team"] = destPath
+		}
+	}
+
+	if data.ProductDemo != "" && strings.HasPrefix(data.ProductDemo, "/uploads/") {
+		destPath := copyImageToTemp(data.ProductDemo, deckDir, "product")
+		if destPath != "" {
+			imagePaths["product"] = destPath
+		}
+	}
+
+	// Étape 2 : Traitement du contenu
+	sendProgressUpdate(progressChan, ProgressUpdate{
+		Status:      "processing",
+		CurrentStep: 2,
 		Message:     "Processing content...",
 	})
-	marpContent, err := generateMarpMarkdown(data)
+	marpContent, err := generateMarpMarkdown(data, imagePaths, deckID)
 	if err != nil {
 		log.Printf("Error generating Marp markdown: %v", err)
 		sendProgressUpdate(progressChan, ProgressUpdate{
 			Status:      "failed",
-			CurrentStep: 1,
+			CurrentStep: 2,
 			Message:     "Error generating content",
 		})
 		close(progressChan)
 		return
 	}
 
-	// Création des dossiers nécessaires
-	os.MkdirAll("temp", os.ModePerm)
-	os.MkdirAll("outputs", os.ModePerm)
-
-	// Étape 2 : Création des slides
+	// Étape 3 : Création des slides
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "processing",
-		CurrentStep: 2,
+		CurrentStep: 3,
 		Message:     "Creating slides...",
 	})
-	mdFilePath := filepath.Join("temp", deckID+".md")
+	mdFilePath := filepath.Join(deckDir, "presentation.md")
 	if err := os.WriteFile(mdFilePath, []byte(marpContent), 0644); err != nil {
 		log.Printf("Error saving markdown file: %v", err)
 		sendProgressUpdate(progressChan, ProgressUpdate{
 			Status:      "failed",
-			CurrentStep: 2,
+			CurrentStep: 3,
 			Message:     "Error saving slides",
 		})
 		close(progressChan)
 		return
 	}
 
-	// Étape 3 : Conversion en PDF
+	// Étape 4 : Conversion en PDF
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "processing",
-		CurrentStep: 3,
+		CurrentStep: 4,
 		Message:     "Converting to PDF...",
 	})
-	outputPath := filepath.Join("outputs", deckID+".pdf")
+	pdfOutputPath := filepath.Join("outputs", deckID+".pdf")
 	args := []string{
 		"@marp-team/marp-cli",
 		mdFilePath,
 		"--pdf",
-		"--output", outputPath,
+		"--output", pdfOutputPath,
 		"--theme", data.Theme,
+		"--allow-local-files", // Important to allow local images
 	}
 	cmd := exec.Command("npx", args...)
 	var stdout, stderr bytes.Buffer
@@ -305,28 +436,82 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 		log.Printf("Error converting to PDF: %v, stderr: %s", err, stderr.String())
 		sendProgressUpdate(progressChan, ProgressUpdate{
 			Status:      "failed",
-			CurrentStep: 3,
+			CurrentStep: 4,
 			Message:     "Error converting to PDF",
 		})
 		close(progressChan)
 		return
 	}
 
-	// Étape 4 : Finalisation
+	// Étape 4.5 : Conversion en HTML
+	sendProgressUpdate(progressChan, ProgressUpdate{
+		Status:      "processing",
+		CurrentStep: 5,
+		Message:     "Converting to HTML...",
+	})
+	htmlOutputPath := filepath.Join("outputs", deckID+".html")
+	htmlArgs := []string{
+		"@marp-team/marp-cli",
+		mdFilePath,
+		"--html",
+		"--output", htmlOutputPath,
+		"--theme", data.Theme,
+		"--allow-local-files",
+	}
+	htmlCmd := exec.Command("npx", htmlArgs...)
+	htmlCmd.Stdout = &stdout
+	htmlCmd.Stderr = &stderr
+	if err := htmlCmd.Run(); err != nil {
+		log.Printf("Error converting to HTML: %v, stderr: %s", err, stderr.String())
+	}
+
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "completed",
-		CurrentStep: 4,
+		CurrentStep: 6,
 		Message:     "Finalizing deck...",
-		DownloadUrl: "/download/" + deckID + ".pdf", // ou la route exacte pour le téléchargement
+		DownloadUrl: "/download/" + deckID + ".pdf",
+		ViewUrl:     "/view/" + deckID,
 	})
 
-	// Clôturer le canal
+	// close canal
 	close(progressChan)
 
-	// Nettoyer le canal de la map globale
+	// Clean canal
 	progressMu.Lock()
 	delete(progressChannels, deckID)
 	progressMu.Unlock()
+}
+
+// Helper function to copy uploaded images to the temporary deck directory
+func copyImageToTemp(sourcePath string, deckDir, prefix string) string {
+	// Convert web path to filesystem path
+	sourcePath = "." + sourcePath
+
+	// Make sure the source file exists
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		log.Printf("Source image does not exist: %s", sourcePath)
+		return ""
+	}
+
+	// Generate destination filename with extension preserved
+	ext := filepath.Ext(sourcePath)
+	destFileName := prefix + ext
+	destPath := filepath.Join(deckDir, destFileName)
+
+	// Copy the file
+	input, err := os.ReadFile(sourcePath)
+	if err != nil {
+		log.Printf("Failed to read image file: %v", err)
+		return ""
+	}
+
+	if err = os.WriteFile(destPath, input, 0644); err != nil {
+		log.Printf("Failed to copy image to temp directory: %v", err)
+		return ""
+	}
+
+	// Return the relative path for use in markdown
+	return destFileName
 }
 
 func sendProgressUpdate(progressChan chan string, update ProgressUpdate) {
@@ -338,7 +523,7 @@ func sendProgressUpdate(progressChan chan string, update ProgressUpdate) {
 	progressChan <- string(data)
 }
 
-func generateMarpMarkdown(data PitchDeckData) (string, error) {
+func generateMarpMarkdown(data PitchDeckData, imagePaths map[string]string, deckID string) (string, error) {
 	// Format team members for the prompt
 	teamInfo := formatTeamMembersNew(data.TeamMembers)
 
@@ -477,25 +662,58 @@ Ensure the document is fully formatted in Marp markdown with the necessary direc
 	marpContent := apiResponse.Choices[0].Message.Content
 	marpContent = cleanMarpContent(marpContent)
 
-	// 	// Append additional slides for Contact Info and Visual Assets (Step 10) independently
-	// 	additionalMarkdown := fmt.Sprintf(`
+	// Add image slides if images were provided
+	imageMarkdown := generateImageMarkdown(imagePaths)
+	if imageMarkdown != "" {
+		marpContent += "\n" + imageMarkdown
+	}
 
-	// ---
-	// # Thank You & Contact Info
-	// - **Email:** %s
-	// - **LinkedIn:** %s
-	// - **Socials:** %s
-	// - **Key Takeaways:** %s
-
-	// ---
-	// # Visual Assets
-	// - **Company Logo Provided:** %t
-	// - **Team Photo Provided:** %t
-	// - **Product Demo Provided:** %t
-	// `, data.ContactInfo.Email, data.ContactInfo.Linkedin, data.ContactInfo.Socials, data.KeyTakeaways, data.CompanyLogo, data.TeamPhoto, data.ProductDemo)
-
-	// 	marpContent += additionalMarkdown
 	return marpContent, nil
+}
+
+// Generate markdown for images
+func generateImageMarkdown(imagePaths map[string]string) string {
+	var imageSlides strings.Builder
+
+	// Check if we have any images to add
+	if len(imagePaths) == 0 {
+		return ""
+	}
+
+	// Company logo slide
+	if logoPath, exists := imagePaths["logo"]; exists {
+		imageSlides.WriteString(fmt.Sprintf(`
+---
+# Company Logo
+
+![Company Logo](./%s)
+
+`, logoPath))
+	}
+
+	// Team photo slide
+	if teamPath, exists := imagePaths["team"]; exists {
+		imageSlides.WriteString(fmt.Sprintf(`
+---
+# Our Team
+
+![Team Photo](./%s)
+
+`, teamPath))
+	}
+
+	// Product demo slide
+	if productPath, exists := imagePaths["product"]; exists {
+		imageSlides.WriteString(fmt.Sprintf(`
+---
+# Product Demo
+
+![Product Demo](./%s)
+
+`, productPath))
+	}
+
+	return imageSlides.String()
 }
 
 func cleanMarpContent(content string) string {

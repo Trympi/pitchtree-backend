@@ -25,6 +25,7 @@ main
 # Fichiers de sortie
 /outputs/
 /pdfs/
+/uploads/
 
 # Fichiers d'environnement
 .env
