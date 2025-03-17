@@ -118,10 +118,10 @@ type InfomaniakRequest struct {
 
 // Available themes
 var availableThemes = map[string]bool{
-	"default": true,
-	"gaia":    true,
-	"uncover": true,
-	"bespoke": true,
+	"default":   true,
+	"gaia":      true,
+	"uncover":   true,
+	"rose-pine": true,
 }
 
 func main() {
