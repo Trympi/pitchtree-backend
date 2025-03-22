@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"pitch-deck-generator/prompts"
 	"strings"
 	"sync"
 	"time"
@@ -159,7 +160,6 @@ func main() {
 
 	// API Endpoints
 	r.POST("/api/generate-pitch-deck", generatePitchDeck)
-	r.GET("/api/available-themes", getAvailableThemes)
 
 	// New endpoint for image uploads
 	r.POST("/api/upload-image", uploadImage)
@@ -270,7 +270,6 @@ func isValidImageType(filename string) bool {
 		".jpg":  true,
 		".jpeg": true,
 		".png":  true,
-		".gif":  true,
 		".svg":  true,
 	}
 	return validExts[ext]
@@ -307,25 +306,6 @@ func generatePitchDeck(c *gin.Context) {
 		"deckId":  deckID,
 	})
 }
-
-// func convertMarkdownToHTML(mdFilePath string, outputPath string) error {
-// 	args := []string{
-// 		"@marp-team/marp-cli",
-// 		mdFilePath,
-// 		"--html",
-// 		"--output", outputPath,
-// 		"--allow-local-files",
-// 	}
-// 	cmd := exec.Command("npx", args...)
-// 	var stdout, stderr bytes.Buffer
-// 	cmd.Stdout = &stdout
-// 	cmd.Stderr = &stderr
-// 	if err := cmd.Run(); err != nil {
-// 		log.Printf("Error converting to HTML: %v, stderr: %s", err, stderr.String())
-// 		return err
-// 	}
-// 	return nil
-// }
 
 func processPitchDeck(data PitchDeckData, deckID string) {
 	progressMu.RLock()
@@ -524,75 +504,71 @@ func sendProgressUpdate(progressChan chan string, update ProgressUpdate) {
 }
 
 func generateMarpMarkdown(data PitchDeckData, imagePaths map[string]string, deckID string) (string, error) {
-	// Format team members for the prompt
-	teamInfo := formatTeamMembersNew(data.TeamMembers)
+	// Convert your existing data to the format expected by the prompts package
+	promptsData := prompts.PitchDeckData{
+		// Project Information
+		ProjectName: data.ProjectName,
+		BigIdea:     data.BigIdea,
 
-	// Build the prompt using the new fields but excluding contact info and visual assets
-	prompt := fmt.Sprintf(`
-	You are an expert in crafting Marp markdown presentations. Use the following data to generate a complete, ready-to-use pitch deck in Marp markdown format.
+		// Market Analysis
+		Problem:           data.Problem,
+		TargetAudience:    data.TargetAudience,
+		ExistingSolutions: data.ExistingSolutions,
 
--- Project Overview --
-Project Name: %s
-Big Idea: %s
+		// Solution Details
+		Solution:             data.Solution,
+		Technology:           data.Technology,
+		Differentiators:      data.Differentiators,
+		CompetitiveAdvantage: data.CompetitiveAdvantage,
+		DevelopmentPlan:      data.DevelopmentPlan,
+		MarketSize:           data.MarketSize,
 
--- Market Context --
-Problem: %s
-Target Audience: %s
-Existing Solutions: %s
+		// Investment Information
+		FundingAmount:       data.FundingAmount,
+		FundingUse:          data.FundingUse,
+		Valuation:           data.Valuation,
+		InvestmentStructure: data.InvestmentStructure,
 
--- Solution & Competitive Advantage --
-Solution: %s
-Technology: %s
-Differentiators: %s
-Competitive Advantage: %s
-Development Plan: %s
-Market Size: %s
+		// Market Opportunity
+		TAM:          data.TAM,
+		SAM:          data.SAM,
+		SOM:          data.SOM,
+		TargetNiche:  data.TargetNiche,
+		MarketTrends: data.MarketTrends,
 
--- Fundraising & Investment Details --
-Funding Amount: %s
-Funding Use: %s
-Valuation: %s
-Investment Structure: %s
+		// Team Information
+		WhyYou:            data.WhyYou,
+		TeamMembers:       convertTeamMembers(data.TeamMembers),
+		TeamQualification: data.TeamQualification,
 
--- Market Opportunity --
-TAM: %s
-SAM: %s
-SOM: %s
-Target Niche: %s
-Market Trends: %s
+		// Business Model
+		RevenueModel: data.RevenueModel,
+		ScalingPlan:  data.ScalingPlan,
+		GTMStrategy:  data.GTMStrategy,
 
--- Team & Experience --
-Why You: %s
-Team Members: %s
-Team Qualification: %s
+		// Traction & Milestones
+		Achievements:   data.Achievements,
+		NextMilestones: data.NextMilestones,
 
--- Business & Revenue Model --
-Revenue Model: %s
-Scaling Plan: %s
-GTM Strategy: %s
+		// Set Theme
+		Theme: data.Theme,
 
--- Achievements & Milestones --
-Achievements: %s
-Next Milestones: %s
+		// Set image paths
+		LogoPath:        imagePaths["logo"],
+		TeamPhotoPath:   imagePaths["team"],
+		ProductDemoPath: imagePaths["product"],
+	}
 
--- Contact Information --
-Email: %s
-LinkedIn: %s
-Socials: %s
-Key Takeaways: %s
+	// Fill in contact info
+	promptsData.ContactInfo.Email = data.ContactInfo.Email
+	promptsData.ContactInfo.LinkedIn = data.ContactInfo.Linkedin
+	promptsData.ContactInfo.Socials = data.ContactInfo.Socials
 
-Ensure the document is fully formatted in Marp markdown with the necessary directives at the top (e.g., marp: true, theme, paginate, backgroundColor, color).
-`,
-		data.ProjectName, data.BigIdea,
-		data.Problem, data.TargetAudience, data.ExistingSolutions,
-		data.Solution, data.Technology, data.Differentiators, data.CompetitiveAdvantage, data.DevelopmentPlan, data.MarketSize,
-		data.FundingAmount, data.FundingUse, data.Valuation, data.InvestmentStructure,
-		data.TAM, data.SAM, data.SOM, data.TargetNiche, data.MarketTrends,
-		data.WhyYou, teamInfo, data.TeamQualification,
-		data.RevenueModel, data.ScalingPlan, data.GTMStrategy,
-		data.Achievements, data.NextMilestones,
-		data.ContactInfo.Email, data.ContactInfo.Linkedin, data.ContactInfo.Socials, data.KeyTakeaways,
-	)
+	// Generate the prompt
+	prompt, err := prompts.GeneratePitchDeckPrompt(promptsData)
+	if err != nil {
+		return "", err
+	}
 
 	// Call the Infomaniak API with the prompt
 	apiKey := os.Getenv("INFOMANIAK_API_KEY")
@@ -602,7 +578,7 @@ Ensure the document is fully formatted in Marp markdown with the necessary direc
 	}
 
 	infomaniakReq := InfomaniakRequest{
-		Model: "mixtral",
+		Model: "mistral24b",
 		Messages: []Message{
 			{
 				Role:    "user",
@@ -621,6 +597,7 @@ Ensure the document is fully formatted in Marp markdown with the necessary direc
 	apiURL := fmt.Sprintf("https://api.infomaniak.com/1/ai/%s/openai/chat/completions", productID)
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Println("Error creating new request:", err)
 		return "", err
 	}
 
@@ -662,6 +639,10 @@ Ensure the document is fully formatted in Marp markdown with the necessary direc
 	marpContent := apiResponse.Choices[0].Message.Content
 	marpContent = cleanMarpContent(marpContent)
 
+	// Add header with CSS for logo in footer
+	// header := generateMarpHeader(imagePaths["logo"], data.Theme)
+	// marpContent = header + marpContent
+
 	// Add image slides if images were provided
 	imageMarkdown := generateImageMarkdown(imagePaths)
 	if imageMarkdown != "" {
@@ -671,6 +652,32 @@ Ensure the document is fully formatted in Marp markdown with the necessary direc
 	return marpContent, nil
 }
 
+func generateMarpHeader(logoPath, theme string) string {
+	// If no logo is provided, just return basic header
+	if logoPath == "" {
+		return "---\nmarp: true\ntheme: " + theme + "\npaginate: true\n---\n\n"
+	}
+
+	// Create header with CSS for logo in footer
+	header := "---\n"
+	header += "marp: true\n"
+	header += "theme: " + theme + "\n"
+	header += "paginate: true\n"
+	header += "style: |\n"
+	header += "  .logo-footer {\n"
+	header += "    position: absolute;\n"
+	header += "    left: 10px;\n"
+	header += "    bottom: 10px;\n"
+	header += "    max-height: 15px;\n"
+	header += "    z-index: 10;\n"
+	header += "  }\n"
+	header += "footer: '<img src=\"./" + logoPath + "\" class=\"logo-footer\" alt=\"Company Logo\">'\n"
+	header += "---\n\n"
+	header += "# " + "Project Pitch Deck\n\n"
+
+	return header
+}
+
 // Generate markdown for images
 func generateImageMarkdown(imagePaths map[string]string) string {
 	var imageSlides strings.Builder
@@ -678,17 +685,6 @@ func generateImageMarkdown(imagePaths map[string]string) string {
 	// Check if we have any images to add
 	if len(imagePaths) == 0 {
 		return ""
-	}
-
-	// Company logo slide
-	if logoPath, exists := imagePaths["logo"]; exists {
-		imageSlides.WriteString(fmt.Sprintf(`
----
-# Company Logo
-
-![Company Logo](./%s)
-
-`, logoPath))
 	}
 
 	// Team photo slide
@@ -721,19 +717,25 @@ func cleanMarpContent(content string) string {
 	if strings.HasPrefix(content, "```") && strings.HasSuffix(content, "```") {
 		lines := strings.Split(content, "\n")
 		if len(lines) > 2 {
-			return strings.Join(lines[1:len(lines)-1], "\n")
+			firstLine := strings.ToLower(lines[0])
+			if strings.Contains(firstLine, "marp") || strings.Contains(firstLine, "markdown") {
+				return strings.Join(lines[1:len(lines)-1], "\n")
+			} else {
+				return content
+			}
 		}
 	}
 	return content
 }
 
-func formatTeamMembersNew(members []TeamMemberNew) string {
-	var sb strings.Builder
+func convertTeamMembers(members []TeamMemberNew) []prompts.TeamMemberNew {
+	converted := make([]prompts.TeamMemberNew, len(members))
 	for i, m := range members {
-		if i > 0 {
-			sb.WriteString("\n")
+		converted[i] = prompts.TeamMemberNew{
+			Name:       m.Name,
+			Role:       m.Role,
+			Experience: m.Experience,
 		}
-		sb.WriteString(fmt.Sprintf("%s (%s): %s", m.Name, m.Role, m.Experience))
 	}
-	return sb.String()
+	return converted
 }
