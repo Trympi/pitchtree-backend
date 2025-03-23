@@ -70,6 +70,7 @@ type PitchDeckData struct {
 	SOM          string `json:"som"` // Serviceable Obtainable Market
 	TargetNiche  string `json:"targetNiche"`
 	MarketTrends string `json:"marketTrends"`
+	Industry     string `json:"industry"`
 
 	// Step 6: Team & Experience
 	WhyYou            string          `json:"whyYou"`
@@ -764,6 +765,7 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 		SOM:                  data.SOM,
 		TargetNiche:          data.TargetNiche,
 		MarketTrends:         data.MarketTrends,
+		Industry:             data.Industry,
 		WhyYou:               data.WhyYou,
 		TeamQualification:    data.TeamQualification,
 		RevenueModel:         data.RevenueModel,
@@ -1095,73 +1097,73 @@ func generateMarpMarkdown(data prompts.PitchDeckData, imagePaths map[string]stri
 	marpContent = cleanMarpContent(marpContent)
 
 	// Add image slides if images were provided
-	imageMarkdown := generateImageMarkdown(imagePaths)
-	if imageMarkdown != "" {
-		marpContent += "\n" + imageMarkdown
-	}
+	// imageMarkdown := generateImageMarkdown(imagePaths)
+	// if imageMarkdown != "" {
+	// 	marpContent += "\n" + imageMarkdown
+	// }
 
 	return marpContent, nil
 }
 
-func generateMarpHeader(logoPath, theme string) string {
-	// If no logo is provided, just return basic header
-	if logoPath == "" {
-		return "---\nmarp: true\ntheme: " + theme + "\npaginate: true\n---\n\n"
-	}
+// func generateMarpHeader(logoPath, theme string) string {
+// 	// If no logo is provided, just return basic header
+// 	if logoPath == "" {
+// 		return "---\nmarp: true\ntheme: " + theme + "\npaginate: true\n---\n\n"
+// 	}
 
-	// Create header with CSS for logo in footer
-	header := "---\n"
-	header += "marp: true\n"
-	header += "theme: " + theme + "\n"
-	header += "paginate: true\n"
-	header += "style: |\n"
-	header += "  .logo-footer {\n"
-	header += "    position: absolute;\n"
-	header += "    left: 10px;\n"
-	header += "    bottom: 10px;\n"
-	header += "    max-height: 15px;\n"
-	header += "    z-index: 10;\n"
-	header += "  }\n"
-	header += "footer: '<img src=\"" + logoPath + "\" class=\"logo-footer\" alt=\"Company Logo\">'\n"
-	header += "---\n\n"
-	header += "# " + "Project Pitch Deck\n\n"
+// 	// Create header with CSS for logo in footer
+// 	header := "---\n"
+// 	header += "marp: true\n"
+// 	header += "theme: " + theme + "\n"
+// 	header += "paginate: true\n"
+// 	header += "style: |\n"
+// 	header += "  .logo-footer {\n"
+// 	header += "    position: absolute;\n"
+// 	header += "    left: 10px;\n"
+// 	header += "    bottom: 10px;\n"
+// 	header += "    max-height: 15px;\n"
+// 	header += "    z-index: 10;\n"
+// 	header += "  }\n"
+// 	header += "footer: '<img src=\"" + logoPath + "\" class=\"logo-footer\" alt=\"Company Logo\">'\n"
+// 	header += "---\n\n"
+// 	header += "# " + "Project Pitch Deck\n\n"
 
-	return header
-}
+// 	return header
+// }
 
 // Generate markdown for images
-func generateImageMarkdown(imagePaths map[string]string) string {
-	var imageSlides strings.Builder
+// func generateImageMarkdown(imagePaths map[string]string) string {
+// 	var imageSlides strings.Builder
 
-	// Check if we have any images to add
-	if len(imagePaths) == 0 {
-		return ""
-	}
+// 	// Check if we have any images to add
+// 	if len(imagePaths) == 0 {
+// 		return ""
+// 	}
 
-	// Team photo slide
-	if teamPath, exists := imagePaths["team"]; exists {
-		imageSlides.WriteString(fmt.Sprintf(`
----
-# Our Team
+// 	// Team photo slide
+// 	if teamPath, exists := imagePaths["team"]; exists {
+// 		imageSlides.WriteString(fmt.Sprintf(`
+// ---
+// # Our Team
 
-![Team Photo](%s)
+// ![Team Photo](%s)
 
-`, teamPath))
-	}
+// `, teamPath))
+// 	}
 
-	// Product demo slide
-	if productPath, exists := imagePaths["product"]; exists {
-		imageSlides.WriteString(fmt.Sprintf(`
----
-# Product Demo
+// 	// Product demo slide
+// 	if productPath, exists := imagePaths["product"]; exists {
+// 		imageSlides.WriteString(fmt.Sprintf(`
+// ---
+// # Product Demo
 
-![Product Demo](%s)
+// ![Product Demo](%s)
 
-`, productPath))
-	}
+// `, productPath))
+// 	}
 
-	return imageSlides.String()
-}
+// 	return imageSlides.String()
+// }
 
 func cleanMarpContent(content string) string {
 	content = strings.TrimSpace(content)

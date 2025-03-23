@@ -12,142 +12,258 @@ const (
 	// Template for slide generation prompt
 	slideGenerationTemplate = `You are an expert presentation designer specializing in creating professional Marp markdown presentations. Your task is to transform the provided content into a compelling, well-structured pitch deck.
 
-Create a complete Marp markdown presentation using the following information:
+	Create a complete Marp markdown presentation using the following information:
+	
+	-- Project Information --
+	Project Name: {{.ProjectName}}
+	Big Idea: {{.BigIdea}}
+	
+	-- Market Analysis --
+	Problem: {{.Problem}}
+	Target Audience: {{.TargetAudience}}
+	Existing Solutions: {{.ExistingSolutions}}
+	
+	-- Solution Details --
+	Solution: {{.Solution}}
+	Technology: {{.Technology}}
+	Differentiators: {{.Differentiators}}
+	Competitive Advantage: {{.CompetitiveAdvantage}}
+	Development Plan: {{.DevelopmentPlan}}
+	
+	-- Investment Information --
+	Funding Amount: {{.FundingAmount}}
+	Funding Use: {{.FundingUse}}
+	Valuation: {{.Valuation}}
+	Investment Structure: {{.InvestmentStructure}}
+	
+	-- Market Opportunity --
+	TAM: {{.TAM}}
+	SAM: {{.SAM}}
+	SOM: {{.SOM}}
+	Target Niche: {{.TargetNiche}}
+	Market Trends: {{.MarketTrends}}
+	Industry: {{.Industry}}
+	
+	-- Team Information --
+	Why You: {{.WhyYou}}
+	Team Members: {{.TeamMembers}}
+	Team Qualification: {{.TeamQualification}}
+	
+	-- Business Model --
+	Revenue Model: {{.RevenueModel}}
+	Scaling Plan: {{.ScalingPlan}}
+	GTM Strategy: {{.GTMStrategy}}
+	
+	-- Traction & Milestones --
+	Achievements: {{.Achievements}}
+	Next Milestones: {{.NextMilestones}}
+	
+	-- Contact Information --
+	Email: {{.ContactInfo.Email}}
+	LinkedIn: {{.ContactInfo.LinkedIn}}
+	Other Socials: {{.ContactInfo.Socials}}
+	Key Takeaways: {{.KeyTakeaways}}
+	
+	PRESENTATION STRUCTURE GUIDELINES:
+	1. Start with a powerful title slide that includes the project name, a compelling tagline derived from the big idea, and a footer with the presenter's name (if provided).
+	2. Create a logical flow of slides in this order:
+	   - Problem & Market Need (emphasize pain points and market size)
+	   - Solution & Value Proposition (highlight unique selling points)
+	   - Market Opportunity (visualize with TAM, SAM, SOM funnel)
+	   - Competitive Landscape (position your solution)
+	   - Product/Technology Overview (emphasize differentiators)
+	   - Business Model & Go-to-Market Strategy
+	   - Team & Expertise (showcase qualifications)
+	   - Traction & Milestones (past achievements and future roadmap)
+	   - Funding Ask & Use of Funds
+	   - Call to Action & Contact Information
+	
+	SLIDE OVERFLOW HANDLING:
+	1. Limit text per slide:
+	   - Keep 5-7 bullet points max.
+	   - Use short phrases instead of sentences.
+	   - If a slide is too dense, break it into multiple slides (e.g., "Part 1" & "Part 2").
+	2. Utilize Marp slide directives:
+	   - <!-- _class: lead --> for section intros with fewer words.
+	   - <!-- _class: split --> for two-column layouts to reduce overflow.
+	   - <!-- _class: invert --> for highlighting essential content.
+	3. Ensure pagination is enabled (paginate: true).
+	
+	FORMATTING GUIDELINES:
+	1. Use the following Marp markdown header:
+	` + "```" + `
+	---
+	marp: true
+	theme: {{.Theme}}
+	paginate: true
+	backgroundColor: {{.BackgroundColor}}
+	color: {{.TextColor}}
+	 footer: '![w:50]({{.LogoPath}})'
+	 ---
+	 ` + "```" + `
 
--- Project Information --
-Project Name: {{.ProjectName}}
-Big Idea: {{.BigIdea}}
+	2. For the title slide, use a larger version of the logo:
+	` + "```" + `
+	---
+	marp: true
+	theme: {{.Theme}}
+	paginate: false
+	backgroundColor: {{.BackgroundColor}}
+	color: {{.TextColor}}
+	footer: '![w:50]({{.LogoPath}})'
+	---
 
--- Market Analysis --
-Problem: {{.Problem}}
-Target Audience: {{.TargetAudience}}
-Existing Solutions: {{.ExistingSolutions}}
+	# {{.ProjectName}}
+	## *Your compelling tagline here*
+	` + "```" + `
 
--- Solution Details --
-Solution: {{.Solution}}
-Technology: {{.Technology}}
-Differentiators: {{.Differentiators}}
-Competitive Advantage: {{.CompetitiveAdvantage}}
-Development Plan: {{.DevelopmentPlan}}
-Market Size: {{.MarketSize}}
+	- Use Marp markdown properly (# for titles, ## for section headers, bullet points, etc.).
+	- Use emojis selectively for visual interest 📊 💡 🚀 🎯 💰.
+	- Tables for structured data, blockquotes for important statements.
+	- Consistent formatting and hierarchy.
+	- COMPANY LOGO: Place the company logo in the bottom left corner of each slide using the footer directive in the Marp header
+	- Team photos: ![w:100]({{.TeamPhotoPath}})
+	
+	Ensure the presentation is concise, professional, and visually appealing. Generate approximately 10-15 slides total.
+	
+	Your complete Marp markdown should be returned without additional commentary or explanations. Do not include the triple backticks in your final output.`
+	// 	slideGenerationTemplate = `You are an expert presentation designer specializing in creating professional Marp markdown presentations. Your task is to transform the provided content into a compelling, well-structured pitch deck.
 
--- Investment Information --
-Funding Amount: {{.FundingAmount}}
-Funding Use: {{.FundingUse}}
-Valuation: {{.Valuation}}
-Investment Structure: {{.InvestmentStructure}}
+	// Create a complete Marp markdown presentation using the following information:
 
--- Market Opportunity --
-TAM: {{.TAM}}
-SAM: {{.SAM}}
-SOM: {{.SOM}}
-Target Niche: {{.TargetNiche}}
-Market Trends: {{.MarketTrends}}
+	// -- Project Information --
+	// Project Name: {{.ProjectName}}
+	// Big Idea: {{.BigIdea}}
 
--- Team Information --
-Why You: {{.WhyYou}}
-Team Members: {{.TeamMembers}}
-Team Qualification: {{.TeamQualification}}
+	// -- Market Analysis --
+	// Problem: {{.Problem}}
+	// Target Audience: {{.TargetAudience}}
+	// Existing Solutions: {{.ExistingSolutions}}
 
--- Business Model --
-Revenue Model: {{.RevenueModel}}
-Scaling Plan: {{.ScalingPlan}}
-GTM Strategy: {{.GTMStrategy}}
+	// -- Solution Details --
+	// Solution: {{.Solution}}
+	// Technology: {{.Technology}}
+	// Differentiators: {{.Differentiators}}
+	// Competitive Advantage: {{.CompetitiveAdvantage}}
+	// Development Plan: {{.DevelopmentPlan}}
+	// Market Size: {{.MarketSize}}
 
--- Traction & Milestones --
-Achievements: {{.Achievements}}
-Next Milestones: {{.NextMilestones}}
+	// -- Investment Information --
+	// Funding Amount: {{.FundingAmount}}
+	// Funding Use: {{.FundingUse}}
+	// Valuation: {{.Valuation}}
+	// Investment Structure: {{.InvestmentStructure}}
 
--- Contact Information --
-Email: {{.ContactInfo.Email}}
-LinkedIn: {{.ContactInfo.LinkedIn}}
-Other Socials: {{.ContactInfo.Socials}}
-Key Takeaways: {{.KeyTakeaways}}
+	// -- Market Opportunity --
+	// TAM: {{.TAM}}
+	// SAM: {{.SAM}}
+	// SOM: {{.SOM}}
+	// Target Niche: {{.TargetNiche}}
+	// Market Trends: {{.MarketTrends}}
+	// Industry: {{.Industry}}
 
-PRESENTATION STRUCTURE GUIDELINES:
-1. Start with a powerful title slide that includes the project name, a compelling tagline derived from the big idea, and a footer with the presenter's name (if provided).
-2. Create a logical flow of slides in this order:
-   - Problem & Market Need (emphasize pain points and market size)
-   - Solution & Value Proposition (highlight unique selling points)
-   - Market Opportunity (visualize with TAM, SAM, SOM funnel)
-   - Competitive Landscape (position your solution)
-   - Product/Technology Overview (emphasize differentiators)
-   - Business Model & Go-to-Market Strategy
-   - Team & Expertise (showcase qualifications)
-   - Traction & Milestones (past achievements and future roadmap)
-   - Funding Ask & Use of Funds
-   - Call to Action & Contact Information
+	// -- Team Information --
+	// Why You: {{.WhyYou}}
+	// Team Members: {{.TeamMembers}}
+	// Team Qualification: {{.TeamQualification}}
 
-FORMATTING GUIDELINES:
-1. Use the following Marp markdown header:
-` + "```" + `
----
-marp: true
-theme: {{.Theme}}
-paginate: true
-backgroundColor: {{.BackgroundColor}}
-color: {{.TextColor}}
-footer: '![w:25]({{.LogoPath}})'
----
-` + "```" + `
+	// -- Business Model --
+	// Revenue Model: {{.RevenueModel}}
+	// Scaling Plan: {{.ScalingPlan}}
+	// GTM Strategy: {{.GTMStrategy}}
 
-2. Create visually appealing slides:
-   - Use headers (# for titles, ## for section headers, ### for subsections)
-   - Use bullet points for lists (- or * for main points, indented for sub-points)
-   - Use bold (**text**) for emphasis and italics (*text*) for secondary emphasis
-   - Create visual hierarchies with indentation and spacing
-   - Use emoji selectively for visual interest 📊 💡 🚀 🎯 💰
-   - Use tables for structured data comparisons (market analysis, competitive landscape)
-   - Use blockquotes (> text) for customer testimonials or important statements
+	// -- Traction & Milestones --
+	// Achievements: {{.Achievements}}
+	// Next Milestones: {{.NextMilestones}}
 
-3. For each slide:
-   - Include a clear, concise title
-   - Limit content to 5-7 bullet points maximum
-   - Use simple, direct language
-   - Avoid paragraphs and long text blocks
-   - Use consistent formatting throughout
+	// -- Contact Information --
+	// Email: {{.ContactInfo.Email}}
+	// LinkedIn: {{.ContactInfo.LinkedIn}}
+	// Other Socials: {{.ContactInfo.Socials}}
+	// Key Takeaways: {{.KeyTakeaways}}
 
-4. Use slide directives for special formatting:
-   - <!-- _class: lead --> for title or section intro slides
-   - <!-- _class: invert --> for slides you want to emphasize
-   - <!-- _class: split --> for side-by-side content where available
+	// PRESENTATION STRUCTURE GUIDELINES:
+	// 1. Start with a powerful title slide that includes the project name, a compelling tagline derived from the big idea, and a footer with the presenter's name (if provided).
+	// 2. Create a logical flow of slides in this order:
+	//    - Problem & Market Need (emphasize pain points and market size)
+	//    - Solution & Value Proposition (highlight unique selling points)
+	//    - Market Opportunity (visualize with TAM, SAM, SOM funnel)
+	//    - Competitive Landscape (position your solution)
+	//    - Product/Technology Overview (emphasize differentiators)
+	//    - Business Model & Go-to-Market Strategy
+	//    - Team & Expertise (showcase qualifications)
+	//    - Traction & Milestones (past achievements and future roadmap)
+	//    - Funding Ask & Use of Funds
+	//    - Call to Action & Contact Information
 
-5. For animations and interactive elements:
-   - Add fragment animations to reveal bullet points one by one using:
-     <!-- element: class="fragment" --> after each bullet point
-   - Example:
-     ## Key Benefits
-     - First benefit <!-- element: class="fragment" -->
-     - Second benefit <!-- element: class="fragment" -->
-     - Third benefit <!-- element: class="fragment" -->
-   - You can control the order with indices: <!-- element: class="fragment" data-fragment-index="2" -->
-   - For fade effects use: <!-- element: class="fragment fade-in" -->
-   - For highlighting use: <!-- element: class="fragment highlight-current-blue" -->
+	// FORMATTING GUIDELINES:
+	// 1. Use the following Marp markdown header:
+	// ` + "```" + `
+	// ---
+	// marp: true
+	// theme: {{.Theme}}
+	// paginate: true
+	// backgroundColor: {{.BackgroundColor}}
+	// color: {{.TextColor}}
+	// footer: '![w:50]({{.LogoPath}})'
+	// ---
+	// ` + "```" + `
 
-6. For images:
-   - COMPANY LOGO: Place the company logo in the bottom left corner of each slide using the footer directive in the Marp header
-   - Team photos: ![Team]({{.TeamPhotoPath}})
-   - Product screenshots: ![Product]({{.ProductDemoPath}})
+	// 2. Create visually appealing slides:
+	//    - Use headers (# for titles, ## for section headers, ### for subsections)
+	//    - Use bullet points for lists (- or * for main points, indented for sub-points)
+	//    - Use bold (**text**) for emphasis and italics (*text*) for secondary emphasis
+	//    - Create visual hierarchies with indentation and spacing
+	//    - Use emoji selectively for visual interest 📊 💡 🚀 🎯 💰
+	//    - Use tables for structured data comparisons (market analysis, competitive landscape)
+	//    - Use blockquotes (> text) for customer testimonials or important statements
 
-7. For the title slide, use a larger version of the logo:
-` + "```" + `
----
-marp: true
-theme: {{.Theme}}
-paginate: false
-backgroundColor: {{.BackgroundColor}}
-color: {{.TextColor}}
-footer: '![w:25]({{.LogoPath}})'
----
+	// 3. For each slide:
+	//    - Include a clear, concise title
+	//    - Limit content to 5-7 bullet points maximum
+	//    - Use simple, direct language
+	//    - Avoid paragraphs and long text blocks
+	//    - Use consistent formatting throughout
 
-# {{.ProjectName}}
-## *Your compelling tagline here*
+	// 4. Use slide directives for special formatting:
+	//    - <!-- _class: lead --> for title or section intro slides
+	//    - <!-- _class: invert --> for slides you want to emphasize
+	//    - <!-- _class: split --> for side-by-side content where available
 
-` + "```" + `
+	// 5. For animations and interactive elements:
+	//    - Add fragment animations to reveal bullet points one by one using:
+	//      <!-- element: class="fragment" --> after each bullet point
+	//    - Example:
+	//      ## Key Benefits
+	//      - First benefit <!-- element: class="fragment" -->
+	//      - Second benefit <!-- element: class="fragment" -->
+	//      - Third benefit <!-- element: class="fragment" -->
+	//    - You can control the order with indices: <!-- element: class="fragment" data-fragment-index="2" -->
+	//    - For fade effects use: <!-- element: class="fragment fade-in" -->
+	//    - For highlighting use: <!-- element: class="fragment highlight-current-blue" -->
 
-Ensure the presentation is comprehensive yet concise, professional, and visually consistent. Create approximately 10-15 slides total.
+	// 6. For images:
+	//    - COMPANY LOGO: Place the company logo in the bottom left corner of each slide using the footer directive in the Marp header
+	//    - Team photos: ![w:100]({{.TeamPhotoPath}})
 
-Your complete Marp markdown should be returned without any additional commentary or explanations. Do not include the triple backticks in your final output.`
+	// 7. For the title slide, use a larger version of the logo:
+	// ` + "```" + `
+	// ---
+	// marp: true
+	// theme: {{.Theme}}
+	// paginate: false
+	// backgroundColor: {{.BackgroundColor}}
+	// color: {{.TextColor}}
+	// footer: '![w:50]({{.LogoPath}})'
+	// ---
+
+	// # {{.ProjectName}}
+	// ## *Your compelling tagline here*
+	// ` + "```" + `
+
+	// Ensure the presentation is comprehensive yet concise, professional, and visually consistent. Create approximately 10-15 slides total.
+
+	// Your complete Marp markdown should be returned without any additional commentary or explanations. Do not include the triple backticks in your final output.`
 
 	// Example Marp themes with their specific properties
 	defaultTheme = `
@@ -157,7 +273,7 @@ theme: default
 paginate: true
 backgroundColor: white
 color: black
-footer: '![w:25]({{.LogoPath}})'
+footer: '![w:50]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -176,7 +292,7 @@ marp: true
 theme: gaia
 paginate: true
 color: #333
-footer: '![w:25]({{.LogoPath}})'
+footer: '![w:50]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -195,9 +311,8 @@ Presenter Name
 marp: true
 theme: uncover
 paginate: true
-backgroundColor: #333
 color: #fff
-footer: '![w:25]({{.LogoPath}})'
+footer: '![w:50]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -216,9 +331,8 @@ Presenter Name
 marp: true
 theme: rose-pine
 paginate: true
-backgroundColor: #191724
 color: #e0def4
-footer: '![w:25]({{.LogoPath}})'
+footer: '![w:50]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -269,6 +383,7 @@ type PitchDeckData struct {
 	SOM          string
 	TargetNiche  string
 	MarketTrends string
+	Industry     string
 
 	// Team Information
 	WhyYou            string
