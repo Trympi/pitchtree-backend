@@ -1463,7 +1463,6 @@ func updateDeckVisibility(c *gin.Context) {
 		return
 	}
 
-	// Create the update payload
 	updateData := map[string]bool{
 		"is_public": requestBody.IsPublic,
 	}
