@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,12 +20,15 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	storage "github.com/supabase-community/storage-go"
 )
 
 var (
 	progressChannels = make(map[string]chan string)
+	progressOwners   = make(map[string]string)
 	progressMu       sync.RWMutex
 )
 
@@ -83,7 +89,7 @@ type PitchDeckData struct {
 	ContactInfo  ContactInfo `json:"contactInfo"`
 	KeyTakeaways string      `json:"keyTakeaways"`
 
-	// Step 10: File Uploads - Modified to store image paths instead of booleans
+	// Step 10: File Uploads
 	CompanyLogo string `json:"companyLogo"` // Path to the company logo file
 	TeamPhoto   string `json:"teamPhoto"`   // Path to the team photo file
 	ProductDemo string `json:"productDemo"` // Path to the product demo image/screenshot
@@ -125,6 +131,100 @@ var availableThemes = map[string]bool{
 	"rose-pine": true,
 }
 
+// New struct for Supabase pitch deck records
+type PitchDeckRecord struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	PdfURL    string    `json:"pdf_url"`
+	HtmlURL   string    `json:"html_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PitchDeckInfo contains information about a pitch deck
+type PitchDeckInfo struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	PdfURL    string    `json:"pdf_url"`
+	HtmlURL   string    `json:"html_url"`
+	IsPublic  bool      `json:"is_public"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// JWTAuthMiddleware validates the Supabase JWT token
+func JWTAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get the Authorization header
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+			c.Abort()
+			return
+		}
+
+		// Check if the header has the Bearer prefix
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+			c.Abort()
+			return
+		}
+
+		tokenString := parts[1]
+
+		// Get the JWT secret from environment variables
+		jwtSecret := os.Getenv("SUPABASE_JWT_SECRET")
+		if jwtSecret == "" {
+			log.Println("Warning: SUPABASE_JWT_SECRET not set")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server configuration error"})
+			c.Abort()
+			return
+		}
+
+		// Parse and validate the token
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate the algorithm
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(jwtSecret), nil
+		})
+
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		// Check if the token is valid
+		if !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		// Extract claims if needed
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			// You can store user information in the context if needed
+			userID, _ := claims["sub"].(string)
+			c.Set("userID", userID)
+
+			// Check if token is expired
+			if exp, ok := claims["exp"].(float64); ok {
+				if time.Now().Unix() > int64(exp) {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Token expired"})
+					c.Abort()
+					return
+				}
+			}
+		}
+
+		c.Next()
+	}
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Aucun fichier .env trouvé, chargement des variables d'environnement par défaut.")
@@ -141,7 +241,7 @@ func main() {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST"},
-		AllowHeaders:     []string{"Origin", "Content-Type"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
@@ -158,61 +258,149 @@ func main() {
 	r.Static("/pdfs", "./outputs")
 	r.Static("/uploads", "./uploads")
 
-	// API Endpoints
-	r.POST("/api/generate-pitch-deck", generatePitchDeck)
-
-	// New endpoint for image uploads
-	r.POST("/api/upload-image", uploadImage)
-
+	// Public routes
 	r.GET("/api/progress/:deckId", func(c *gin.Context) {
 		deckID := c.Param("deckId")
 
+		// Get the Authorization header
+		authHeader := c.GetHeader("Authorization")
+		var userID string
+
+		// If auth header exists, validate the token
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString := parts[1]
+
+				// Get the JWT secret from environment variables
+				jwtSecret := os.Getenv("SUPABASE_JWT_SECRET")
+				if jwtSecret != "" {
+					// Parse and validate the token
+					token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+						if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+							return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+						}
+						return []byte(jwtSecret), nil
+					})
+
+					if err == nil && token.Valid {
+						if claims, ok := token.Claims.(jwt.MapClaims); ok {
+							userID, _ = claims["sub"].(string)
+						}
+					}
+				}
+			}
+		}
+
+		// For in-progress decks, check the progress channel
 		progressMu.RLock()
 		progressChan, exists := progressChannels[deckID]
 		progressMu.RUnlock()
-		if !exists {
+
+		if exists {
+			// For in-progress decks, we need to check if the user is the owner
+			// This requires storing the userID when creating the progress channel
+			deckOwnerID, ownerExists := progressOwners[deckID]
+			if !ownerExists || (userID != "" && deckOwnerID != userID) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to view this progress"})
+				return
+			}
+
+			// Set headers for SSE
+			c.Writer.Header().Set("Content-Type", "text/event-stream")
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Connection", "keep-alive")
+
+			// Stream events until the channel is closed or client disconnects
+			c.Stream(func(w io.Writer) bool {
+				if msg, ok := <-progressChan; ok {
+					c.SSEvent("message", msg)
+					return true
+				}
+				return false
+			})
+			return
+		}
+
+		// For completed decks, check if the user has permission to view it
+		deckInfo, err := getPitchDeckInfo(deckID)
+		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid deck ID"})
 			return
 		}
 
-		// Set headers for SSE
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
+		// If the deck is not public and the user is not the owner, deny access
+		isPublic := deckInfo.IsPublic
+		if !isPublic && deckInfo.UserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to view this progress"})
+			return
+		}
 
-		// Stream events until the channel is closed or client disconnects
-		c.Stream(func(w io.Writer) bool {
-			if msg, ok := <-progressChan; ok {
-				c.SSEvent("message", msg)
-				return true
-			}
-			return false
+		// Return the completed status
+		c.JSON(http.StatusOK, gin.H{
+			"status":      "completed",
+			"downloadUrl": deckInfo.PdfURL,
+			"viewUrl":     deckInfo.HtmlURL,
 		})
 	})
 
 	setupHtmlRoute(r)
 
+	// Protected API routes - require authentication
+	authRoutes := r.Group("/api")
+	authRoutes.Use(JWTAuthMiddleware())
+	{
+		authRoutes.POST("/generate-pitch-deck", generatePitchDeck)
+		authRoutes.POST("/upload-image", uploadImage)
+		authRoutes.PATCH("/pitch-decks/:deckId/visibility", updateDeckVisibility)
+		authRoutes.GET("/pitch-decks", listUserPitchDecks)
+	}
+
 	r.Run(":" + port)
 }
 
 func setupHtmlRoute(r *gin.Engine) {
-	// Add endpoint to view HTML presentation
+	// Add endpoint to view HTML presentation without authentication
 	r.GET("/view/:deckId", func(c *gin.Context) {
 		deckID := c.Param("deckId")
-		htmlFilePath := filepath.Join("outputs", deckID+".html")
+		log.Printf("Attempting to view deck ID: %s", deckID)
 
-		// Check if the HTML file exists
+		// Serve the local HTML file directly without permission checks
+		htmlFilePath := filepath.Join("outputs", deckID+".html")
+		log.Printf("Looking for HTML file at: %s", htmlFilePath)
+
+		// Check if the HTML file exists locally
 		if _, err := os.Stat(htmlFilePath); os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Presentation not found"})
-			return
+			log.Printf("HTML file not found at path: %s", htmlFilePath)
+
+			// Try alternative path with different casing
+			alternativePath := filepath.Join("outputs", deckID+".HTML")
+			log.Printf("Trying alternative path: %s", alternativePath)
+
+			if _, err := os.Stat(alternativePath); os.IsNotExist(err) {
+				// List files in the outputs directory to help debug
+				files, _ := os.ReadDir("outputs")
+				log.Printf("Files in outputs directory:")
+				for _, file := range files {
+					log.Printf("- %s", file.Name())
+				}
+
+				c.JSON(http.StatusNotFound, gin.H{"error": "Presentation not found"})
+				return
+			} else {
+				htmlFilePath = alternativePath
+			}
 		}
 
 		// Read the HTML file
 		htmlContent, err := os.ReadFile(htmlFilePath)
 		if err != nil {
+			log.Printf("Error reading HTML file: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read presentation"})
 			return
 		}
+
+		log.Printf("Successfully serving HTML content for deck ID: %s", deckID)
 
 		// Serve the HTML content
 		c.Header("Content-Type", "text/html; charset=utf-8")
@@ -231,48 +419,188 @@ func getAvailableThemes(c *gin.Context) {
 	})
 }
 
-// New function for handling image uploads
+// Update the uploadImage function to use Supabase Storage
 func uploadImage(c *gin.Context) {
+	// Get user ID from context (set by JWTAuthMiddleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found"})
+		return
+	}
+
+	// Parse multipart form
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil { // 10 MB max
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
+		return
+	}
+
 	// Get the file from the request
-	file, err := c.FormFile("image")
+	file, header, err := c.Request.FormFile("image")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No image file provided"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
+		return
+	}
+	defer file.Close()
+
+	// Initialize Supabase Storage client
+	storageClient := initSupabaseStorage()
+	if storageClient == nil {
+		// Fall back to local storage if Supabase is not configured
+		uploadImageLocally(c, file, header, userID.(string))
 		return
 	}
 
-	// Check file type
-	if !isValidImageType(file.Filename) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid image format. Only jpg, jpeg, png, gif, and svg are allowed"})
+	// Read file content
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
 		return
 	}
 
-	// Generate a unique filename to prevent collisions
-	filename := uuid.New().String() + filepath.Ext(file.Filename)
-	filePath := filepath.Join("uploads", filename)
+	// Generate a unique filename to avoid collisions
+	fileExt := filepath.Ext(header.Filename)
+	uniqueID := uuid.New().String()
+	fileName := uniqueID + fileExt
 
-	// Save the file
-	if err := c.SaveUploadedFile(file, filePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+	// Create a path with user ID for organization
+	filePath := fmt.Sprintf("uploads/%s/%s", userID, fileName)
+
+	// Determine content type based on file extension
+	contentType := mime.TypeByExtension(fileExt)
+	if contentType == "" {
+		// If we can't determine from extension, try to detect from content
+		contentType = http.DetectContentType(fileBytes)
+	}
+
+	// If still empty, default to a generic type
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Upload to Supabase Storage with content type
+	fileOptions := storage.FileOptions{
+		ContentType: &contentType,
+	}
+
+	_, err = storageClient.UploadFile("user-media", filePath, bytes.NewReader(fileBytes), fileOptions)
+	if err != nil {
+		log.Printf("Error uploading to Supabase: %v", err)
+		// Fall back to local storage
+		uploadImageLocally(c, bytes.NewReader(fileBytes), header, userID.(string))
 		return
 	}
 
-	// Return the file path (relative to root) for the client to use
+	// Get the public URL
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	filePath = strings.TrimPrefix(filePath, "/")
+	publicURL := fmt.Sprintf("%s/storage/v1/object/public/user-media/%s",
+		strings.TrimSuffix(supabaseURL, "/"),
+		filePath)
+
+	// Save the file metadata to the database (optional)
+	// saveUserFileRecord(userID.(string), header.Filename, publicURL)
+
+	// Return the URL to the client
 	c.JSON(http.StatusOK, gin.H{
-		"path": "/uploads/" + filename,
-		"url":  "/uploads/" + filename,
+		"url":      publicURL,
+		"filename": header.Filename,
 	})
 }
 
-// Helper function to check if the uploaded file is a valid image type
-func isValidImageType(filename string) bool {
-	ext := strings.ToLower(filepath.Ext(filename))
-	validExts := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".svg":  true,
+// Update the uploadImageLocally function to not return anything
+func uploadImageLocally(c *gin.Context, file io.Reader, header *multipart.FileHeader, userID string) {
+	// Create uploads directory if it doesn't exist
+	os.MkdirAll("uploads", os.ModePerm)
+
+	// Generate a unique filename
+	fileExt := filepath.Ext(header.Filename)
+	uniqueID := uuid.New().String()
+	fileName := uniqueID + fileExt
+
+	// Create the file path
+	filePath := filepath.Join("uploads", fileName)
+
+	// Create a new file
+	dst, err := os.Create(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create file"})
+		return
 	}
-	return validExts[ext]
+	defer dst.Close()
+
+	// Copy the file content
+	if _, err = io.Copy(dst, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	// Return the URL to the client
+	c.JSON(http.StatusOK, gin.H{
+		"url":      "/uploads/" + fileName,
+		"filename": header.Filename,
+	})
+}
+
+// Add a function to save user file records to the database
+func saveUserFileRecord(userID, originalName, fileURL string) error {
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		return fmt.Errorf("supabase credentials not set")
+	}
+
+	// Create the record
+	type UserFileRecord struct {
+		ID           string    `json:"id"`
+		UserID       string    `json:"user_id"`
+		OriginalName string    `json:"original_name"`
+		FileURL      string    `json:"file_url"`
+		CreatedAt    time.Time `json:"created_at"`
+	}
+
+	record := UserFileRecord{
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		OriginalName: originalName,
+		FileURL:      fileURL,
+		CreatedAt:    time.Now(),
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %w", err)
+	}
+
+	// Create the request
+	apiURL := fmt.Sprintf("%s/rest/v1/user_files", supabaseURL)
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+	req.Header.Set("Prefer", "return=minimal")
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to save record: %s", string(body))
+	}
+
+	return nil
 }
 
 func generatePitchDeck(c *gin.Context) {
@@ -290,16 +618,24 @@ func generatePitchDeck(c *gin.Context) {
 		return
 	}
 
+	// Get user ID from context (set by JWTAuthMiddleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found"})
+		return
+	}
+
 	// Generate a unique deck ID
 	deckID := uuid.New().String()
 
-	// progress channel for this deck
+	// Create progress channel for this deck and store the owner
 	progressMu.Lock()
 	progressChannels[deckID] = make(chan string, 10) // buffered channel
+	progressOwners[deckID] = userID.(string)         // Store the owner
 	progressMu.Unlock()
 
 	// Process pitch deck generation asynchronously
-	go processPitchDeck(data, deckID)
+	go processPitchDeck(data, deckID, userID.(string))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Pitch deck generation started",
@@ -307,7 +643,7 @@ func generatePitchDeck(c *gin.Context) {
 	})
 }
 
-func processPitchDeck(data PitchDeckData, deckID string) {
+func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 	progressMu.RLock()
 	progressChan, exists := progressChannels[deckID]
 	progressMu.RUnlock()
@@ -315,6 +651,9 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 		log.Printf("No progress channel found for deckID %s", deckID)
 		return
 	}
+
+	// Initialize Supabase Storage client
+	storageClient := initSupabaseStorage()
 
 	// Étape 0 : Initialisation
 	sendProgressUpdate(progressChan, ProgressUpdate{
@@ -336,24 +675,55 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 
 	// Copy any provided images to the deck's directory for proper inclusion in the markdown
 	imagePaths := map[string]string{}
-	if data.CompanyLogo != "" && strings.HasPrefix(data.CompanyLogo, "/uploads/") {
-		destPath := copyImageToTemp(data.CompanyLogo, deckDir, "logo")
-		if destPath != "" {
-			imagePaths["logo"] = destPath
+
+	// Handle company logo
+	if data.CompanyLogo != "" {
+		if strings.HasPrefix(data.CompanyLogo, "/uploads/") {
+			// Local file
+			destPath := copyImageToTemp(data.CompanyLogo, deckDir, "logo")
+			if destPath != "" {
+				imagePaths["logo"] = destPath
+			}
+		} else if strings.Contains(data.CompanyLogo, "supabase") {
+			// Supabase URL - download the file
+			destPath := downloadImageToTemp(data.CompanyLogo, deckDir, "logo")
+			if destPath != "" {
+				imagePaths["logo"] = destPath
+			}
 		}
 	}
 
-	if data.TeamPhoto != "" && strings.HasPrefix(data.TeamPhoto, "/uploads/") {
-		destPath := copyImageToTemp(data.TeamPhoto, deckDir, "team")
-		if destPath != "" {
-			imagePaths["team"] = destPath
+	// Handle team photo
+	if data.TeamPhoto != "" {
+		if strings.HasPrefix(data.TeamPhoto, "/uploads/") {
+			// Local file
+			destPath := copyImageToTemp(data.TeamPhoto, deckDir, "team")
+			if destPath != "" {
+				imagePaths["team"] = destPath
+			}
+		} else if strings.Contains(data.TeamPhoto, "supabase") {
+			// Supabase URL - download the file
+			destPath := downloadImageToTemp(data.TeamPhoto, deckDir, "team")
+			if destPath != "" {
+				imagePaths["team"] = destPath
+			}
 		}
 	}
 
-	if data.ProductDemo != "" && strings.HasPrefix(data.ProductDemo, "/uploads/") {
-		destPath := copyImageToTemp(data.ProductDemo, deckDir, "product")
-		if destPath != "" {
-			imagePaths["product"] = destPath
+	// Handle product demo
+	if data.ProductDemo != "" {
+		if strings.HasPrefix(data.ProductDemo, "/uploads/") {
+			// Local file
+			destPath := copyImageToTemp(data.ProductDemo, deckDir, "product")
+			if destPath != "" {
+				imagePaths["product"] = destPath
+			}
+		} else if strings.Contains(data.ProductDemo, "supabase") {
+			// Supabase URL - download the file
+			destPath := downloadImageToTemp(data.ProductDemo, deckDir, "product")
+			if destPath != "" {
+				imagePaths["product"] = destPath
+			}
 		}
 	}
 
@@ -363,7 +733,86 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 		CurrentStep: 2,
 		Message:     "Processing content...",
 	})
-	marpContent, err := generateMarpMarkdown(data, imagePaths, deckID)
+
+	// Create a data structure for the prompt with proper image paths
+	promptData := prompts.PitchDeckData{
+		ProjectName:          data.ProjectName,
+		BigIdea:              data.BigIdea,
+		Problem:              data.Problem,
+		TargetAudience:       data.TargetAudience,
+		ExistingSolutions:    data.ExistingSolutions,
+		Solution:             data.Solution,
+		Technology:           data.Technology,
+		Differentiators:      data.Differentiators,
+		CompetitiveAdvantage: data.CompetitiveAdvantage,
+		DevelopmentPlan:      data.DevelopmentPlan,
+		MarketSize:           data.MarketSize,
+		FundingAmount:        data.FundingAmount,
+		FundingUse:           data.FundingUse,
+		Valuation:            data.Valuation,
+		InvestmentStructure:  data.InvestmentStructure,
+		TAM:                  data.TAM,
+		SAM:                  data.SAM,
+		SOM:                  data.SOM,
+		TargetNiche:          data.TargetNiche,
+		MarketTrends:         data.MarketTrends,
+		WhyYou:               data.WhyYou,
+		TeamQualification:    data.TeamQualification,
+		RevenueModel:         data.RevenueModel,
+		ScalingPlan:          data.ScalingPlan,
+		GTMStrategy:          data.GTMStrategy,
+		Achievements:         data.Achievements,
+		NextMilestones:       data.NextMilestones,
+		Theme:                data.Theme,
+	}
+
+	// Set image paths - use absolute URLs for Supabase-stored images
+	if logoPath, ok := imagePaths["logo"]; ok {
+		// For local development, use relative path
+		if strings.HasPrefix(data.CompanyLogo, "/uploads/") {
+			promptData.LogoPath = logoPath
+		} else {
+			// For Supabase storage, use the original URL
+			promptData.LogoPath = data.CompanyLogo
+		}
+	} else {
+		promptData.LogoPath = "./logo.png" // Default placeholder
+	}
+
+	if teamPhotoPath, ok := imagePaths["team"]; ok {
+		if strings.HasPrefix(data.TeamPhoto, "/uploads/") {
+			promptData.TeamPhotoPath = teamPhotoPath
+		} else {
+			promptData.TeamPhotoPath = data.TeamPhoto
+		}
+	}
+
+	if productDemoPath, ok := imagePaths["product"]; ok {
+		if strings.HasPrefix(data.ProductDemo, "/uploads/") {
+			promptData.ProductDemoPath = productDemoPath
+		} else {
+			promptData.ProductDemoPath = data.ProductDemo
+		}
+	}
+
+	// Set contact info
+	promptData.ContactInfo.Email = data.ContactInfo.Email
+	promptData.ContactInfo.LinkedIn = data.ContactInfo.Linkedin
+	promptData.ContactInfo.Socials = data.ContactInfo.Socials
+	promptData.KeyTakeaways = data.KeyTakeaways
+
+	// Process team members
+	var teamMembers []prompts.TeamMemberNew
+	for _, member := range data.TeamMembers {
+		teamMembers = append(teamMembers, prompts.TeamMemberNew{
+			Name:       member.Name,
+			Role:       member.Role,
+			Experience: member.Experience,
+		})
+	}
+	promptData.TeamMembers = teamMembers
+
+	marpContent, err := generateMarpMarkdown(promptData, imagePaths, deckID)
 	if err != nil {
 		log.Printf("Error generating Marp markdown: %v", err)
 		sendProgressUpdate(progressChan, ProgressUpdate{
@@ -445,13 +894,60 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 		log.Printf("Error converting to HTML: %v, stderr: %s", err, stderr.String())
 	}
 
+	// Étape 5: Upload to Supabase Storage
+	sendProgressUpdate(progressChan, ProgressUpdate{
+		Status:      "processing",
+		CurrentStep: 6,
+		Message:     "Uploading files to cloud storage...",
+	})
+
+	var pdfURL, htmlURL string
+
+	if storageClient != nil {
+		// Upload PDF to Supabase
+		pdfFileName := deckID + ".pdf"
+		uploadedPdfURL, err := uploadToSupabase(storageClient, pdfOutputPath, "pitch-decks", pdfFileName)
+		if err != nil {
+			log.Printf("Error uploading PDF to Supabase: %v", err)
+			// Continue with local URLs if upload fails
+			pdfURL = "/download/" + deckID + ".pdf"
+		} else {
+			pdfURL = uploadedPdfURL
+		}
+
+		// Always use local URL for HTML
+		htmlURL = "/view/" + deckID
+
+		// Save record to Supabase database
+		err = savePitchDeckRecord(deckID, userID, data.ProjectName, pdfURL, htmlURL)
+		if err != nil {
+			log.Printf("Error saving pitch deck record: %v", err)
+			// Continue with local URLs if saving fails
+			if pdfURL == "" {
+				pdfURL = "/download/" + deckID + ".pdf"
+			}
+		}
+	} else {
+		// Use local URLs if Supabase is not configured
+		pdfURL = "/download/" + deckID + ".pdf"
+		htmlURL = "/view/" + deckID
+	}
+
+	// Send final progress update with URLs
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "completed",
-		CurrentStep: 6,
+		CurrentStep: 7,
 		Message:     "Finalizing deck...",
-		DownloadUrl: "/download/" + deckID + ".pdf",
-		ViewUrl:     "/view/" + deckID,
+		DownloadUrl: pdfURL,
+		ViewUrl:     htmlURL,
 	})
+
+	// Update the status in Supabase
+	err = updatePitchDeckStatus(deckID, "completed")
+	if err != nil {
+		log.Printf("Error updating pitch deck status: %v", err)
+		// Continue anyway, as this is not critical
+	}
 
 	// close canal
 	close(progressChan)
@@ -459,6 +955,7 @@ func processPitchDeck(data PitchDeckData, deckID string) {
 	// Clean canal
 	progressMu.Lock()
 	delete(progressChannels, deckID)
+	delete(progressOwners, deckID) // Also remove the owner mapping
 	progressMu.Unlock()
 }
 
@@ -503,69 +1000,9 @@ func sendProgressUpdate(progressChan chan string, update ProgressUpdate) {
 	progressChan <- string(data)
 }
 
-func generateMarpMarkdown(data PitchDeckData, imagePaths map[string]string, deckID string) (string, error) {
-	// Convert your existing data to the format expected by the prompts package
-	promptsData := prompts.PitchDeckData{
-		// Project Information
-		ProjectName: data.ProjectName,
-		BigIdea:     data.BigIdea,
-
-		// Market Analysis
-		Problem:           data.Problem,
-		TargetAudience:    data.TargetAudience,
-		ExistingSolutions: data.ExistingSolutions,
-
-		// Solution Details
-		Solution:             data.Solution,
-		Technology:           data.Technology,
-		Differentiators:      data.Differentiators,
-		CompetitiveAdvantage: data.CompetitiveAdvantage,
-		DevelopmentPlan:      data.DevelopmentPlan,
-		MarketSize:           data.MarketSize,
-
-		// Investment Information
-		FundingAmount:       data.FundingAmount,
-		FundingUse:          data.FundingUse,
-		Valuation:           data.Valuation,
-		InvestmentStructure: data.InvestmentStructure,
-
-		// Market Opportunity
-		TAM:          data.TAM,
-		SAM:          data.SAM,
-		SOM:          data.SOM,
-		TargetNiche:  data.TargetNiche,
-		MarketTrends: data.MarketTrends,
-
-		// Team Information
-		WhyYou:            data.WhyYou,
-		TeamMembers:       convertTeamMembers(data.TeamMembers),
-		TeamQualification: data.TeamQualification,
-
-		// Business Model
-		RevenueModel: data.RevenueModel,
-		ScalingPlan:  data.ScalingPlan,
-		GTMStrategy:  data.GTMStrategy,
-
-		// Traction & Milestones
-		Achievements:   data.Achievements,
-		NextMilestones: data.NextMilestones,
-
-		// Set Theme
-		Theme: data.Theme,
-
-		// Set image paths
-		LogoPath:        imagePaths["logo"],
-		TeamPhotoPath:   imagePaths["team"],
-		ProductDemoPath: imagePaths["product"],
-	}
-
-	// Fill in contact info
-	promptsData.ContactInfo.Email = data.ContactInfo.Email
-	promptsData.ContactInfo.LinkedIn = data.ContactInfo.Linkedin
-	promptsData.ContactInfo.Socials = data.ContactInfo.Socials
-
+func generateMarpMarkdown(data prompts.PitchDeckData, imagePaths map[string]string, deckID string) (string, error) {
 	// Generate the prompt
-	prompt, err := prompts.GeneratePitchDeckPrompt(promptsData)
+	prompt, err := prompts.GeneratePitchDeckPrompt(data)
 	if err != nil {
 		return "", err
 	}
@@ -639,10 +1076,6 @@ func generateMarpMarkdown(data PitchDeckData, imagePaths map[string]string, deck
 	marpContent := apiResponse.Choices[0].Message.Content
 	marpContent = cleanMarpContent(marpContent)
 
-	// Add header with CSS for logo in footer
-	// header := generateMarpHeader(imagePaths["logo"], data.Theme)
-	// marpContent = header + marpContent
-
 	// Add image slides if images were provided
 	imageMarkdown := generateImageMarkdown(imagePaths)
 	if imageMarkdown != "" {
@@ -671,7 +1104,7 @@ func generateMarpHeader(logoPath, theme string) string {
 	header += "    max-height: 15px;\n"
 	header += "    z-index: 10;\n"
 	header += "  }\n"
-	header += "footer: '<img src=\"./" + logoPath + "\" class=\"logo-footer\" alt=\"Company Logo\">'\n"
+	header += "footer: '<img src=\"" + logoPath + "\" class=\"logo-footer\" alt=\"Company Logo\">'\n"
 	header += "---\n\n"
 	header += "# " + "Project Pitch Deck\n\n"
 
@@ -693,7 +1126,7 @@ func generateImageMarkdown(imagePaths map[string]string) string {
 ---
 # Our Team
 
-![Team Photo](./%s)
+![Team Photo](%s)
 
 `, teamPath))
 	}
@@ -704,7 +1137,7 @@ func generateImageMarkdown(imagePaths map[string]string) string {
 ---
 # Product Demo
 
-![Product Demo](./%s)
+![Product Demo](%s)
 
 `, productPath))
 	}
@@ -738,4 +1171,452 @@ func convertTeamMembers(members []TeamMemberNew) []prompts.TeamMemberNew {
 		}
 	}
 	return converted
+}
+
+// Add a function to initialize Supabase Storage client
+func initSupabaseStorage() *storage.Client {
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY") // Use service key for admin operations
+
+	if supabaseURL == "" || supabaseKey == "" {
+		log.Println("Warning: Supabase credentials not set, storage features will be disabled")
+		return nil
+	}
+
+	return storage.NewClient(supabaseURL+"/storage/v1", supabaseKey, nil)
+}
+
+// Upload a file to Supabase Storage with the correct MIME type
+func uploadToSupabase(storageClient *storage.Client, filePath, bucketName, fileName string) (string, error) {
+	if storageClient == nil {
+		return "", fmt.Errorf("storage client not initialized")
+	}
+
+	// Read the file
+	fileContent, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Detect MIME type based on file extension
+	contentType := mime.TypeByExtension(filepath.Ext(fileName))
+
+	// Force HTML files to be served as "text/html"
+	if filepath.Ext(fileName) == ".html" || filepath.Ext(fileName) == ".htm" {
+		contentType = "text/html"
+	}
+
+	if contentType == "" {
+		contentType = "application/octet-stream" // Default fallback
+	}
+
+	// Ensure fileName doesn't have a leading slash
+	fileName = strings.TrimPrefix(fileName, "/")
+
+	// Upload to Supabase Storage with correct content type
+	_, err = storageClient.UploadFile(
+		bucketName,
+		fileName,
+		bytes.NewReader(fileContent),
+		storage.FileOptions{ContentType: &contentType},
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	// Get the public URL - Fix the double slash issue
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	publicURL := fmt.Sprintf("%s/storage/v1/object/public/%s/%s",
+		strings.TrimSuffix(supabaseURL, "/"), // Remove trailing slash if present
+		bucketName,
+		fileName)
+
+	return publicURL, nil
+}
+
+// Add a function to save pitch deck record to Supabase database
+func savePitchDeckRecord(deckID, userID, name, pdfURL, htmlURL string) error {
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		return fmt.Errorf("supabase credentials not set")
+	}
+
+	// Create the record
+	record := PitchDeckInfo{
+		ID:        deckID,
+		UserID:    userID,
+		Name:      name,
+		PdfURL:    pdfURL,
+		HtmlURL:   htmlURL,
+		IsPublic:  false,       // Default to private
+		Status:    "completed", // Set status to completed
+		CreatedAt: time.Now(),
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %w", err)
+	}
+
+	// Create the request
+	apiURL := fmt.Sprintf("%s/rest/v1/pitch_decks", supabaseURL)
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+	req.Header.Set("Prefer", "return=minimal")
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to save record: %s", string(body))
+	}
+
+	return nil
+}
+
+// Add a function to download images from URLs to the temp directory
+func downloadImageToTemp(imageURL, deckDir, prefix string) string {
+	// Log the URL being requested
+	log.Printf("Attempting to download image from: %s", imageURL)
+
+	// Validate URL format
+	_, err := url.Parse(imageURL)
+	if err != nil {
+		log.Printf("Invalid image URL format: %v", err)
+		return ""
+	}
+
+	// Create HTTP client
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Make the request
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		log.Printf("Failed to download image from URL: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to download image, status: %d, URL: %s", resp.StatusCode, imageURL)
+		return ""
+	}
+
+	// Determine file extension from Content-Type
+	contentType := resp.Header.Get("Content-Type")
+	ext := ".jpg" // Default extension
+
+	switch contentType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/gif":
+		ext = ".gif"
+	case "image/webp":
+		ext = ".webp"
+	case "image/svg+xml":
+		ext = ".svg"
+	}
+
+	// If Content-Type is not reliable, try to get extension from URL
+	if ext == ".jpg" && strings.Contains(imageURL, ".") {
+		urlExt := filepath.Ext(imageURL)
+		if urlExt != "" {
+			ext = urlExt
+		}
+	}
+
+	// Generate destination filename
+	destFileName := prefix + ext
+	destPath := filepath.Join(deckDir, destFileName)
+
+	// Create the file
+	out, err := os.Create(destPath)
+	if err != nil {
+		log.Printf("Failed to create file: %v", err)
+		return ""
+	}
+	defer out.Close()
+
+	// Copy the response body to the file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		log.Printf("Failed to save image: %v", err)
+		return ""
+	}
+
+	// Return the relative path for use in markdown
+	return destFileName
+}
+
+// getPitchDeckInfo retrieves information about a pitch deck from Supabase
+func getPitchDeckInfo(deckID string) (*PitchDeckInfo, error) {
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		return nil, fmt.Errorf("supabase credentials not set")
+	}
+
+	// Create the request to get the pitch deck record
+	apiURL := fmt.Sprintf("%s/rest/v1/pitch_decks?id=eq.%s&select=*", supabaseURL, deckID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get record: %s", string(body))
+	}
+
+	// Parse the response
+	var decks []PitchDeckInfo
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if err := json.Unmarshal(body, &decks); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(decks) == 0 {
+		return nil, fmt.Errorf("pitch deck not found")
+	}
+
+	return &decks[0], nil
+}
+
+// Function to update deck visibility
+func updateDeckVisibility(c *gin.Context) {
+	deckID := c.Param("deckId")
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found"})
+		return
+	}
+
+	// Parse request body
+	var requestBody struct {
+		IsPublic bool `json:"isPublic"`
+	}
+
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get the deck info to verify ownership
+	deckInfo, err := getPitchDeckInfo(deckID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deck not found"})
+		return
+	}
+
+	// Verify ownership
+	if deckInfo.UserID != userID.(string) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to update this deck"})
+		return
+	}
+
+	// Update the visibility
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Supabase credentials not set"})
+		return
+	}
+
+	// Create the update payload
+	updateData := map[string]bool{
+		"is_public": requestBody.IsPublic,
+	}
+
+	jsonData, err := json.Marshal(updateData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create update payload"})
+		return
+	}
+
+	// Create the request
+	apiURL := fmt.Sprintf("%s/rest/v1/pitch_decks?id=eq.%s", supabaseURL, deckID)
+	req, err := http.NewRequest("PATCH", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+	req.Header.Set("Prefer", "return=minimal")
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send request"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update visibility: %s", string(body))})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Deck visibility updated successfully",
+		"isPublic": requestBody.IsPublic,
+	})
+}
+
+// Function to list user's pitch decks
+func listUserPitchDecks(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found"})
+		return
+	}
+
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Supabase credentials not set"})
+		return
+	}
+
+	// Create the request to get the user's pitch decks
+	apiURL := fmt.Sprintf("%s/rest/v1/pitch_decks?user_id=eq.%s&order=created_at.desc", supabaseURL, userID.(string))
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
+	}
+
+	// Set headers
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send request"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get decks: %s", string(body))})
+		return
+	}
+
+	// Parse the response
+	var decks []PitchDeckInfo
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
+		return
+	}
+
+	if err := json.Unmarshal(body, &decks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse response"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"decks": decks,
+	})
+}
+
+// Function to update pitch deck status in Supabase
+func updatePitchDeckStatus(deckID string, status string) error {
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	supabaseKey := os.Getenv("SUPABASE_SERVICE_KEY")
+
+	if supabaseURL == "" || supabaseKey == "" {
+		return fmt.Errorf("supabase credentials not set")
+	}
+
+	// Create the update payload
+	updateData := map[string]string{
+		"status": status,
+	}
+
+	jsonData, err := json.Marshal(updateData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal update data: %w", err)
+	}
+
+	// Create the request
+	apiURL := fmt.Sprintf("%s/rest/v1/pitch_decks?id=eq.%s", supabaseURL, deckID)
+	req, err := http.NewRequest("PATCH", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", supabaseKey)
+	req.Header.Set("Authorization", "Bearer "+supabaseKey)
+	req.Header.Set("Prefer", "return=minimal")
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to update status: %s", string(body))
+	}
+
+	return nil
 }
