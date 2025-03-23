@@ -365,6 +365,14 @@ func setupHtmlRoute(r *gin.Engine) {
 		deckID := c.Param("deckId")
 		log.Printf("Attempting to view deck ID: %s", deckID)
 
+		// Try to get deck info from Supabase
+		deckInfo, err := getPitchDeckInfo(deckID)
+		if err == nil && deckInfo.HtmlURL != "" && strings.HasPrefix(deckInfo.HtmlURL, "http") {
+			// If we have a remote URL in Supabase, redirect to it
+			c.Redirect(http.StatusFound, deckInfo.HtmlURL)
+			return
+		}
+
 		// Serve the local HTML file directly without permission checks
 		htmlFilePath := filepath.Join("outputs", deckID+".html")
 		log.Printf("Looking for HTML file at: %s", htmlFilePath)
@@ -915,8 +923,15 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 			pdfURL = uploadedPdfURL
 		}
 
-		// Always use local URL for HTML
-		htmlURL = "/view/" + deckID
+		// Upload HTML to Supabase Storage
+		uploadedHtmlURL, err := uploadToSupabase(storageClient, htmlOutputPath, "pitch-decks", deckID+".html")
+		if err != nil {
+			log.Printf("Error uploading HTML to Supabase: %v", err)
+			// Continue with local URLs if upload fails
+			htmlURL = "/view/" + deckID
+		} else {
+			htmlURL = uploadedHtmlURL
+		}
 
 		// Save record to Supabase database
 		err = savePitchDeckRecord(deckID, userID, data.ProjectName, pdfURL, htmlURL)
@@ -925,6 +940,9 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 			// Continue with local URLs if saving fails
 			if pdfURL == "" {
 				pdfURL = "/download/" + deckID + ".pdf"
+			}
+			if htmlURL == "" || !strings.HasPrefix(htmlURL, "http") {
+				htmlURL = "/view/" + deckID
 			}
 		}
 	} else {
