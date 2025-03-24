@@ -51,12 +51,12 @@ type PitchDeckData struct {
 	ExistingSolutions string `json:"existingSolutions"`
 
 	// Step 3: Solution & Competitive Advantage
-	Solution             string `json:"solution"`
-	Technology           string `json:"technology"`
-	Differentiators      string `json:"differentiators"`
-	CompetitiveAdvantage string `json:"competitiveAdvantage"`
-	DevelopmentPlan      string `json:"developmentPlan"`
-	MarketSize           string `json:"marketSize"`
+	Solution        string `json:"solution"`
+	Technology      string `json:"technology"`
+	Differentiators string `json:"differentiators"`
+	// CompetitiveAdvantage string `json:"competitiveAdvantage"`
+	DevelopmentPlan string `json:"developmentPlan"`
+	MarketSize      string `json:"marketSize"`
 
 	// Step 4: Fundraising & Investment Details
 	FundingAmount       string `json:"fundingAmount"`
@@ -94,6 +94,7 @@ type PitchDeckData struct {
 	CompanyLogo string `json:"companyLogo"` // Path to the company logo file
 	TeamPhoto   string `json:"teamPhoto"`   // Path to the team photo file
 	ProductDemo string `json:"productDemo"` // Path to the product demo image/screenshot
+	Diagram     string `json:"diagram"`
 
 	// Theme Selection
 	Theme string `json:"theme"`
@@ -736,6 +737,22 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 		}
 	}
 
+	if data.Diagram != "" {
+		if strings.HasPrefix(data.Diagram, "/uploads/") {
+			// Local file
+			destPath := copyImageToTemp(data.Diagram, deckDir, "product")
+			if destPath != "" {
+				imagePaths["product"] = destPath
+			}
+		} else if strings.Contains(data.Diagram, "supabase") {
+			// Supabase URL - download the file
+			destPath := downloadImageToTemp(data.Diagram, deckDir, "product")
+			if destPath != "" {
+				imagePaths["product"] = destPath
+			}
+		}
+	}
+
 	// Étape 2 : Traitement du contenu
 	sendProgressUpdate(progressChan, ProgressUpdate{
 		Status:      "processing",
@@ -745,35 +762,35 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 
 	// Create a data structure for the prompt with proper image paths
 	promptData := prompts.PitchDeckData{
-		ProjectName:          data.ProjectName,
-		BigIdea:              data.BigIdea,
-		Problem:              data.Problem,
-		TargetAudience:       data.TargetAudience,
-		ExistingSolutions:    data.ExistingSolutions,
-		Solution:             data.Solution,
-		Technology:           data.Technology,
-		Differentiators:      data.Differentiators,
-		CompetitiveAdvantage: data.CompetitiveAdvantage,
-		DevelopmentPlan:      data.DevelopmentPlan,
-		MarketSize:           data.MarketSize,
-		FundingAmount:        data.FundingAmount,
-		FundingUse:           data.FundingUse,
-		Valuation:            data.Valuation,
-		InvestmentStructure:  data.InvestmentStructure,
-		TAM:                  data.TAM,
-		SAM:                  data.SAM,
-		SOM:                  data.SOM,
-		TargetNiche:          data.TargetNiche,
-		MarketTrends:         data.MarketTrends,
-		Industry:             data.Industry,
-		WhyYou:               data.WhyYou,
-		TeamQualification:    data.TeamQualification,
-		RevenueModel:         data.RevenueModel,
-		ScalingPlan:          data.ScalingPlan,
-		GTMStrategy:          data.GTMStrategy,
-		Achievements:         data.Achievements,
-		NextMilestones:       data.NextMilestones,
-		Theme:                data.Theme,
+		ProjectName:       data.ProjectName,
+		BigIdea:           data.BigIdea,
+		Problem:           data.Problem,
+		TargetAudience:    data.TargetAudience,
+		ExistingSolutions: data.ExistingSolutions,
+		Solution:          data.Solution,
+		Technology:        data.Technology,
+		Differentiators:   data.Differentiators,
+		// CompetitiveAdvantage: data.CompetitiveAdvantage,
+		DevelopmentPlan:     data.DevelopmentPlan,
+		MarketSize:          data.MarketSize,
+		FundingAmount:       data.FundingAmount,
+		FundingUse:          data.FundingUse,
+		Valuation:           data.Valuation,
+		InvestmentStructure: data.InvestmentStructure,
+		TAM:                 data.TAM,
+		SAM:                 data.SAM,
+		SOM:                 data.SOM,
+		TargetNiche:         data.TargetNiche,
+		MarketTrends:        data.MarketTrends,
+		Industry:            data.Industry,
+		WhyYou:              data.WhyYou,
+		TeamQualification:   data.TeamQualification,
+		RevenueModel:        data.RevenueModel,
+		ScalingPlan:         data.ScalingPlan,
+		GTMStrategy:         data.GTMStrategy,
+		Achievements:        data.Achievements,
+		NextMilestones:      data.NextMilestones,
+		Theme:               data.Theme,
 	}
 
 	// Set image paths - use absolute URLs for Supabase-stored images
@@ -802,6 +819,14 @@ func processPitchDeck(data PitchDeckData, deckID string, userID string) {
 			promptData.ProductDemoPath = productDemoPath
 		} else {
 			promptData.ProductDemoPath = data.ProductDemo
+		}
+	}
+
+	if diagramPhotoPath, ok := imagePaths["product"]; ok {
+		if strings.HasPrefix(data.Diagram, "/uploads/") {
+			promptData.DiagramPhotoPath = diagramPhotoPath
+		} else {
+			promptData.DiagramPhotoPath = data.Diagram
 		}
 	}
 
