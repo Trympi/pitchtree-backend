@@ -13,28 +13,28 @@ const (
 	slideGenerationTemplate = `You are an expert presentation designer specializing in creating professional Marp markdown presentations. Your task is to transform the provided content into a compelling, well-structured pitch deck.
 
 	Create a complete Marp markdown presentation using the following information:
-	
+
 	-- Project Information --
 	Project Name: {{.ProjectName}}
 	Big Idea: {{.BigIdea}}
-	
+
 	-- Market Analysis --
 	Problem: {{.Problem}}
 	Target Audience: {{.TargetAudience}}
 	Existing Solutions: {{.ExistingSolutions}}
-	
+
 	-- Solution Details --
 	Solution: {{.Solution}}
 	Technology: {{.Technology}}
 	Differentiators: {{.Differentiators}}
 	Development Plan: {{.DevelopmentPlan}}
-	
+
 	-- Investment Information --
 	Funding Amount: {{.FundingAmount}}
 	Funding Use: {{.FundingUse}}
 	Valuation: {{.Valuation}}
 	Investment Structure: {{.InvestmentStructure}}
-	
+
 	-- Market Opportunity --
 	TAM: {{.TAM}}
 	SAM: {{.SAM}}
@@ -42,27 +42,27 @@ const (
 	Target Niche: {{.TargetNiche}}
 	Market Trends: {{.MarketTrends}}
 	Industry: {{.Industry}}
-	
+
 	-- Team Information --
 	Why You: {{.WhyYou}}
 	Team Members: {{.TeamMembers}}
 	Team Qualification: {{.TeamQualification}}
-	
+
 	-- Business Model --
 	Revenue Model: {{.RevenueModel}}
 	Scaling Plan: {{.ScalingPlan}}
 	GTM Strategy: {{.GTMStrategy}}
-	
+
 	-- Traction & Milestones --
 	Achievements: {{.Achievements}}
 	Next Milestones: {{.NextMilestones}}
-	
+
 	-- Contact Information --
 	Email: {{.ContactInfo.Email}}
 	LinkedIn: {{.ContactInfo.LinkedIn}}
 	Other Socials: {{.ContactInfo.Socials}}
 	Key Takeaways: {{.KeyTakeaways}}
-	
+
 	PRESENTATION STRUCTURE GUIDELINES:
 	1. Start with a powerful title slide that includes the project name, a compelling tagline derived from the big idea, and a footer with the presenter's name (if provided).
 	2. Create a logical flow of slides in this order:
@@ -76,18 +76,15 @@ const (
 	   - Traction & Milestones (past achievements and future roadmap)
 	   - Funding Ask & Use of Funds
 	   - Call to Action & Contact Information
-	
+
 	SLIDE OVERFLOW HANDLING:
 	1. Limit text per slide:
-	   - Keep 5-7 bullet points max.
 	   - Use short phrases instead of sentences.
 	   - If a slide is too dense, break it into multiple slides (e.g., "Part 1" & "Part 2").
 	2. Utilize Marp slide directives:
-	   - <!-- _class: lead --> for section intros with fewer words.
 	   - <!-- _class: split --> for two-column layouts to reduce overflow.
 	   - <!-- _class: invert --> for highlighting essential content.
-	3. Ensure pagination is enabled (paginate: true).
-	
+
 	FORMATTING GUIDELINES:
 	1. Use the following Marp markdown header:
 	` + "```" + `
@@ -97,11 +94,38 @@ const (
 	paginate: true
 	backgroundColor: {{.BackgroundColor}}
 	color: {{.TextColor}}
-	header: '![right:20 w:50]({{.LogoPath}})'
-	 ---
-	 ` + "```" + `
+	header: '![w:60]({{.LogoPath}})'
+	---
+	` + "```" + `
 
-	2. For the title slide, use a larger version of the logo:
+	2. Create visually appealing slides:
+	   - Use headers (# for titles, ## for section headers, ### for subsections)
+	   - Use bullet points for lists (use "*")
+	   - Use bold (**text**) for emphasis and italics (*text*) for secondary emphasis
+	   - Create visual hierarchies with indentation and spacing
+	   - Use emoji selectively for visual interest 📊 💡 🚀 🎯 💰
+	   - Use tables for structured data comparisons (market analysis, competitive landscape)
+	   - Use blockquotes (> text) for customer testimonials or important statements
+
+	3. For each slide:
+	   - Include a clear, concise title
+	   - Limit content to 5-7 bullet points maximum
+	   - Use simple, direct language
+	   - Avoid paragraphs and long text blocks
+	   - Use consistent formatting throughout
+
+	4. Use slide directives for special formatting:
+	   - <!-- _class: lead --> for title or section intro slides
+	   - <!-- _class: invert --> for slides you want to emphasize
+	   - <!-- _class: split --> for side-by-side content where available
+	
+	5. For images:
+		- COMPANY LOGO: Place the company logo in the top right corner of each slide using the header directive in the Marp header
+		- COMPANY LOGO: Place the company logo in the top right corner of each slide using the header directive in the Marp header
+ 		- Solution diagram: Include the solution diagram in the Solution or Technology slide with ![w:500]({{.DiagramPhotoPath}})
+		- Team photos: ![w:100]({{.TeamPhotoPath}})
+
+	7. For the title slide, use a larger version of the logo:
 	` + "```" + `
 	---
 	marp: true
@@ -109,24 +133,16 @@ const (
 	paginate: false
 	backgroundColor: {{.BackgroundColor}}
 	color: {{.TextColor}}
-	header: '![right:20 w:50]({{.LogoPath}})'
+	header: '![w:60]({{.LogoPath}})'
 	---
 
 	# {{.ProjectName}}
 	## *Your compelling tagline here*
 	` + "```" + `
 
-	- Use Marp markdown properly (# for titles, ## for section headers, bullet points, etc.).
-	- Use emojis selectively for visual interest 📊 💡 🚀 🎯 💰.
-	- Tables for structured data, blockquotes for important statements.
-	- Consistent formatting and hierarchy.
-	- COMPANY LOGO: Place the company logo in the top right corner of each slide using the header directive in the Marp header
-	- Solution diagram: Include the solution diagram in the Solution or Technology slide with ![w:500]({{.DiagramPhotoPath}})
-	- Team photos: ![w:100]({{.TeamPhotoPath}})
-	
-	Ensure the presentation is concise, professional, and visually appealing. Generate approximately 10-15 slides total.
-	
-	Your complete Marp markdown should be returned without additional commentary or explanations. Do not include the triple backticks in your final output.`
+	Ensure the presentation is comprehensive yet concise, professional, and visually consistent. Create approximately 10-15 slides total.
+
+	Your complete Marp markdown should be returned without any additional commentary or explanations. Do not include the triple backticks in your final output.`
 
 	// Example Marp themes with their specific properties
 	defaultTheme = `
@@ -136,7 +152,7 @@ theme: default
 paginate: true
 backgroundColor: white
 color: black
-header: '![right:20 w:50]({{.LogoPath}})'
+header: '![right:20 w:60]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -155,7 +171,7 @@ marp: true
 theme: gaia
 paginate: true
 color: #333
-header: '![right:20 w:50]({{.LogoPath}})'
+header: '![right:20 w:60]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -175,7 +191,7 @@ marp: true
 theme: uncover
 paginate: true
 color: #fff
-header: '![right:20 w:50]({{.LogoPath}})'
+header: '![right:20 w:60]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
@@ -195,7 +211,7 @@ marp: true
 theme: rose-pine
 paginate: true
 color: #e0def4
-header: '![right:20 w:50]({{.LogoPath}})'
+header: '![w:60]({{.LogoPath}})'
 ---
 # Title Slide
 ## Subtitle
