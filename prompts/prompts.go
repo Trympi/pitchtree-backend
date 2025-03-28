@@ -7,6 +7,72 @@ import (
 	"text/template"
 )
 
+// PitchDeckData contains all the information needed for a pitch deck
+type PitchDeckData struct {
+	// Project Information
+	ProjectName string
+	BigIdea     string
+
+	// Market Analysis
+	Problem           string
+	TargetAudience    string
+	ExistingSolutions string
+
+	// Solution Details
+	Solution        string
+	Technology      string
+	Differentiators string
+	DevelopmentPlan string
+	MarketSize      string
+
+	// Investment Information
+	FundingAmount       string
+	FundingUse          string
+	Valuation           string
+	InvestmentStructure string
+
+	// Market Opportunity
+	TAM          string
+	SAM          string
+	SOM          string
+	TargetNiche  string
+	MarketTrends string
+	Industry     string
+
+	// Team Information
+	WhyYou            string
+	TeamMembers       []TeamMemberNew
+	TeamQualification string
+
+	// Business Model
+	RevenueModel string
+	ScalingPlan  string
+	GTMStrategy  string
+
+	// Traction & Milestones
+	Achievements   string
+	NextMilestones string
+
+	// Contact Information
+	ContactInfo struct {
+		Email    string
+		LinkedIn string
+		Socials  string
+	}
+	KeyTakeaways string
+
+	// Theme and Visual Settings
+	Theme           string
+	BackgroundColor string
+	TextColor       string
+
+	// Image Paths
+	LogoPath         string
+	TeamPhotoPath    string
+	ProductDemoPath  string
+	DiagramPhotoPath string
+}
+
 // Templates for different prompt types
 const (
 	slideGenerationTemplate = `You are an expert presentation designer specializing in Marp markdown presentations. Create a professional pitch deck using this information:
@@ -86,7 +152,7 @@ header: '![w:80]({{.LogoPath}})'
 
 IMPORTANT GUIDELINES:
 1. Always begin with a short title slide with a title, a short description, and author name (only if provided). The title should be an H1 header, the description should be a regular text, and the author name should be a regular text.
-2. Ensure that the content on each slide fits inside the slide. Never create paragraphs.
+2. Ensure that the content on each slide fits inside the slide. Never create paragraphs. If a content dont fits inside the slide, move it to another part.
 3. Always use bullet points and other formatting options to make the content more readable.
 4. Prefer multi-line code blocks over inline code blocks for any code longer than a few words. Even if the code is a single line, use a multi-line code block.
 5. Do not end with --- (three dashes) on a new line, since this will end the presentation with an empty slide.
@@ -185,72 +251,6 @@ type TeamMemberNew struct {
 	Experience string
 }
 
-// PitchDeckData contains all the information needed for a pitch deck
-type PitchDeckData struct {
-	// Project Information
-	ProjectName string
-	BigIdea     string
-
-	// Market Analysis
-	Problem           string
-	TargetAudience    string
-	ExistingSolutions string
-
-	// Solution Details
-	Solution        string
-	Technology      string
-	Differentiators string
-	DevelopmentPlan string
-	MarketSize      string
-
-	// Investment Information
-	FundingAmount       string
-	FundingUse          string
-	Valuation           string
-	InvestmentStructure string
-
-	// Market Opportunity
-	TAM          string
-	SAM          string
-	SOM          string
-	TargetNiche  string
-	MarketTrends string
-	Industry     string
-
-	// Team Information
-	WhyYou            string
-	TeamMembers       []TeamMemberNew
-	TeamQualification string
-
-	// Business Model
-	RevenueModel string
-	ScalingPlan  string
-	GTMStrategy  string
-
-	// Traction & Milestones
-	Achievements   string
-	NextMilestones string
-
-	// Contact Information
-	ContactInfo struct {
-		Email    string
-		LinkedIn string
-		Socials  string
-	}
-	KeyTakeaways string
-
-	// Theme and Visual Settings
-	Theme           string
-	BackgroundColor string
-	TextColor       string
-
-	// Image Paths
-	LogoPath         string
-	TeamPhotoPath    string
-	ProductDemoPath  string
-	DiagramPhotoPath string
-}
-
 // GeneratePitchDeckPrompt creates a prompt for the LLM to generate a pitch deck
 func GeneratePitchDeckPrompt(data PitchDeckData) (string, error) {
 	// Set default theme if not specified
@@ -263,7 +263,7 @@ func GeneratePitchDeckPrompt(data PitchDeckData) (string, error) {
 
 	// Handle logo path
 	if data.LogoPath == "" {
-		data.LogoPath = "./logo.png" // Default placeholder
+		data.LogoPath = "./logo.png"
 	}
 
 	// Create the template
