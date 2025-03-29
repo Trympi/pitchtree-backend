@@ -7,97 +7,183 @@ import (
 	"text/template"
 )
 
+// PitchDeckData contains all the information needed for a pitch deck
+type PitchDeckData struct {
+	// Project Information
+	ProjectName string
+	BigIdea     string
+
+	// Market Analysis
+	Problem           string
+	TargetAudience    string
+	ExistingSolutions string
+
+	// Solution Details
+	Solution        string
+	Technology      string
+	Differentiators string
+	DevelopmentPlan string
+	MarketSize      string
+
+	// Investment Information
+	FundingAmount       string
+	FundingUse          string
+	Valuation           string
+	InvestmentStructure string
+
+	// Market Opportunity
+	TAM          string
+	SAM          string
+	SOM          string
+	TargetNiche  string
+	MarketTrends string
+	Industry     string
+
+	// Team Information
+	WhyYou            string
+	TeamMembers       []TeamMemberNew
+	TeamQualification string
+
+	// Business Model
+	RevenueModel string
+	ScalingPlan  string
+	GTMStrategy  string
+
+	// Traction & Milestones
+	Achievements   string
+	NextMilestones string
+
+	// Contact Information
+	ContactInfo struct {
+		Email    string
+		LinkedIn string
+		Socials  string
+	}
+	KeyTakeaways string
+
+	// Theme and Visual Settings
+	Theme           string
+	BackgroundColor string
+	TextColor       string
+
+	// Image Paths
+	LogoPath         string
+	TeamPhotoPath    string
+	ProductDemoPath  string
+	DiagramPhotoPath string
+}
+
 // Templates for different prompt types
 const (
-	slideGenerationTemplate = `You are an expert presentation designer specializing in Marp markdown presentations. Create a professional pitch deck using this information:
+	slideGenerationTemplate = `
+You are an expert presentation designer specializing in Marp markdown presentations. Create a professional pitch deck using the following information:
 
-PROJECT OVERVIEW
--- Project Information --
-Project Name: {{.ProjectName}}
-Big Idea: {{.BigIdea}}
- 	
--- Market Analysis --
-Problem: {{.Problem}}
-Target Audience: {{.TargetAudience}}
-Existing Solutions: {{.ExistingSolutions}}
- 	
--- Solution Details --
-Solution: {{.Solution}}
-Technology: {{.Technology}}
-Differentiators: {{.Differentiators}}
-Development Plan: {{.DevelopmentPlan}}
- 	
--- Investment Information --
-Funding Amount: {{.FundingAmount}}
-Funding Use: {{.FundingUse}}
-Valuation: {{.Valuation}}
-Investment Structure: {{.InvestmentStructure}}
- 	
--- Market Opportunity --
-TAM: {{.TAM}}
-SAM: {{.SAM}}
-SOM: {{.SOM}}
-Target Niche: {{.TargetNiche}}
-Market Trends: {{.MarketTrends}}
-Industry: {{.Industry}}
- 	
--- Team Information --
-Why You: {{.WhyYou}}
-Team Members: {{.TeamMembers}}
-Team Qualification: {{.TeamQualification}}
- 	
--- Business Model --
-Revenue Model: {{.RevenueModel}}
-Scaling Plan: {{.ScalingPlan}}
-GTM Strategy: {{.GTMStrategy}}
- 	
--- Traction & Milestones --
-Achievements: {{.Achievements}}
-Next Milestones: {{.NextMilestones}}
- 	
--- Contact Information --
-Email: {{.ContactInfo.Email}}
-LinkedIn: {{.ContactInfo.LinkedIn}}
-Other Socials: {{.ContactInfo.Socials}}
-Key Takeaways: {{.KeyTakeaways}}
+**PROJECT OVERVIEW**
 
-PRESENTATION REQUIREMENTS:
-1. Use this Marp header:
+- **Project Information**
+  - Project Name: {{.ProjectName}}
+  - Big Idea: {{.BigIdea}}
+
+- **Market Analysis**
+  - Problem: {{.Problem}}
+  - Target Audience: {{.TargetAudience}}
+  - Existing Solutions: {{.ExistingSolutions}}
+
+- **Solution Details**
+  - Solution: {{.Solution}}
+  - Technology: {{.Technology}}
+  - Differentiators: {{.Differentiators}}
+  - Development Plan: {{.DevelopmentPlan}}
+
+- **Investment Information**
+  - Funding Amount: {{.FundingAmount}}
+  - Funding Use: {{.FundingUse}}
+  - Valuation: {{.Valuation}}
+  - Investment Structure: {{.InvestmentStructure}}
+
+- **Market Opportunity**
+  - TAM: {{.TAM}}
+  - SAM: {{.SAM}}
+  - SOM: {{.SOM}}
+  - Target Niche: {{.TargetNiche}}
+  - Market Trends: {{.MarketTrends}}
+  - Industry: {{.Industry}}
+
+- **Team Information**
+  - Why You: {{.WhyYou}}
+  - Team Members: {{.TeamMembers}}
+  - Team Qualification: {{.TeamQualification}}
+
+- **Business Model**
+  - Revenue Model: {{.RevenueModel}}
+  - Scaling Plan: {{.ScalingPlan}}
+  - GTM Strategy: {{.GTMStrategy}}
+
+- **Traction & Milestones**
+  - Achievements: {{.Achievements}}
+  - Next Milestones: {{.NextMilestones}}
+
+- **Contact Information**
+  - Email: {{.ContactInfo.Email}}
+  - LinkedIn: {{.ContactInfo.LinkedIn}}
+  - Other Socials: {{.ContactInfo.Socials}}
+  - Key Takeaways: {{.KeyTakeaways}}
+
+**PRESENTATION REQUIREMENTS:**
+
+1. Use this Marp structure and place the logo in the top right corner of each slide using HTML:
 ---
 marp: true
 theme: {{.Theme}}
 paginate: true
 backgroundColor: {{.BackgroundColor}}
 color: {{.TextColor}}
-header: '![w:80]({{.LogoPath}})'
 ---
 
-2. Create 10-13 slides following this structure:
- 	- Problem & Market Need (emphasize pain points and market size)
- 	- Solution & Value Proposition (highlight unique selling points)
- 	- Market Opportunity (visualize with TAM, SAM, SOM funnel), ![w:500]({{.DiagramPhotoPath}})
- 	- Competitive Landscape (position your solution)
- 	- Product/Technology Overview (emphasize differentiators)
- 	- Business Model & Go-to-Market Strategy
- 	- Team & Expertise (showcase qualifications), ![w:100]({{.TeamPhotoPath}})
- 	- Traction & Milestones (past achievements and future roadmap)
- 	- Funding Ask & Use of Funds
- 	- Call to Action & Contact Information
+<style>
+  section {
+    position: relative;
+  }
 
-IMPORTANT GUIDELINES:
-1. Always begin with a short title slide with a title, a short description, and author name (only if provided). The title should be an H1 header, the description should be a regular text, and the author name should be a regular text.
-2. Ensure that the content on each slide fits inside the slide. Never create paragraphs.
+  .top-right-logo {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 80px;
+    z-index: 1000;
+  }
+</style>
+
+<div class="top-right-logo">
+  <img src="{{.LogoPath}}" alt="Logo" width="80">
+</div>
+
+2. Create 10-13 slides following this structure:
+   - Problem & Market Need (emphasize pain points and market size)
+   - Solution & Value Proposition (highlight unique selling points)
+   - Market Opportunity (visualize with TAM, SAM, SOM funnel), ![w:500]({{.DiagramPhotoPath}})
+   - Competitive Landscape (position your solution)
+   - Product/Technology Overview (emphasize differentiators)
+   - Business Model & Go-to-Market Strategy
+   - Team & Expertise (showcase qualifications), ![w:60]({{.TeamPhotoPath}})
+   - Traction & Milestones (past achievements and future roadmap)
+   - Funding Ask & Use of Funds
+   - Call to Action & Contact Information
+
+**IMPORTANT GUIDELINES:**
+
+1. Always begin with a short title slide with a title, a brief description, and the author's name (if provided). The title should be an H1 header, the description should be regular text, and the author's name should be regular text.
+2. Ensure that the content on each slide fits inside the slide. Never create paragraphs. If content doesn't fit, move it to another part.
 3. Always use bullet points and other formatting options to make the content more readable.
 4. Prefer multi-line code blocks over inline code blocks for any code longer than a few words. Even if the code is a single line, use a multi-line code block.
-5. Do not end with --- (three dashes) on a new line, since this will end the presentation with an empty slide.
-6. Use bold (**text**) for emphasis and italics (*text*) for secondary emphasis
-7. Create visual hierarchies with indentation and spacing
-8. Use tables for structured data comparisons (market analysis, competitive landscape)
-9. Use blockquotes (> text) for customer testimonials or important statements
+5. Do not end with --- (three dashes) on a new line, as this will end the presentation with an empty slide.
+6. Use bold (**text**) for emphasis and italics (*text*) for secondary emphasis.
+7. Create visual hierarchies with indentation and spacing.
+8. Use tables for structured data comparisons (market analysis, competitive landscape).
+9. Use blockquotes (> text) for customer testimonials or important statements.
 
-Make the slides look as beautiful and well-designed as possible. Use all of the formatting options available to you.
+---
 `
-
 	// Example Marp themes with their specific properties
 	defaultTheme = `
 ---
@@ -185,72 +271,6 @@ type TeamMemberNew struct {
 	Experience string
 }
 
-// PitchDeckData contains all the information needed for a pitch deck
-type PitchDeckData struct {
-	// Project Information
-	ProjectName string
-	BigIdea     string
-
-	// Market Analysis
-	Problem           string
-	TargetAudience    string
-	ExistingSolutions string
-
-	// Solution Details
-	Solution        string
-	Technology      string
-	Differentiators string
-	DevelopmentPlan string
-	MarketSize      string
-
-	// Investment Information
-	FundingAmount       string
-	FundingUse          string
-	Valuation           string
-	InvestmentStructure string
-
-	// Market Opportunity
-	TAM          string
-	SAM          string
-	SOM          string
-	TargetNiche  string
-	MarketTrends string
-	Industry     string
-
-	// Team Information
-	WhyYou            string
-	TeamMembers       []TeamMemberNew
-	TeamQualification string
-
-	// Business Model
-	RevenueModel string
-	ScalingPlan  string
-	GTMStrategy  string
-
-	// Traction & Milestones
-	Achievements   string
-	NextMilestones string
-
-	// Contact Information
-	ContactInfo struct {
-		Email    string
-		LinkedIn string
-		Socials  string
-	}
-	KeyTakeaways string
-
-	// Theme and Visual Settings
-	Theme           string
-	BackgroundColor string
-	TextColor       string
-
-	// Image Paths
-	LogoPath         string
-	TeamPhotoPath    string
-	ProductDemoPath  string
-	DiagramPhotoPath string
-}
-
 // GeneratePitchDeckPrompt creates a prompt for the LLM to generate a pitch deck
 func GeneratePitchDeckPrompt(data PitchDeckData) (string, error) {
 	// Set default theme if not specified
@@ -263,7 +283,7 @@ func GeneratePitchDeckPrompt(data PitchDeckData) (string, error) {
 
 	// Handle logo path
 	if data.LogoPath == "" {
-		data.LogoPath = "./logo.png" // Default placeholder
+		data.LogoPath = "./logo.png"
 	}
 
 	// Create the template
