@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -176,9 +175,9 @@ func (s *PitchDeckService) processDeck(data model.PitchDeckData, deckInfo *model
 	}
 
 	// Cleanup local files after successful upload
-	// os.Remove(pdfPath)
-	// os.Remove(htmlPath)
-	// os.RemoveAll(deckDir)
+	os.Remove(pdfPath)
+	os.Remove(htmlPath)
+	os.RemoveAll(deckDir)
 
 	// Close the channel
 	s.progress.CloseChannel(deckInfo.ID)
@@ -485,7 +484,10 @@ func (s *PitchDeckService) downloadImage(imageURL, deckDir, prefix string) strin
 		return ""
 	}
 
-	return destFileName
+	// Return the original URL instead of just the filename
+	// This ensures the AI gets the full URL for the image
+	log.Println("HERE MY IMAGE: ", imageURL)
+	return imageURL
 }
 
 func (s *PitchDeckService) generateMarkdown(data model.PitchDeckData, imagePaths map[string]string) (string, error) {
@@ -494,6 +496,13 @@ func (s *PitchDeckService) generateMarkdown(data model.PitchDeckData, imagePaths
 	if googleKey == "" {
 		return "", fmt.Errorf("missing Gemini API key")
 	}
+
+	// 	// Call the Infomaniak API with the prompt
+	// 	apiKey := os.Getenv("INFOMANIAK_API_KEY")
+	// 	productID := os.Getenv("INFOMANIAK_PRODUCT_ID")
+	// 	if apiKey == "" || productID == "" {
+	// 		return "", fmt.Errorf("missing Infomaniak API credentials")
+	// 	}
 
 	// Convert model.PitchDeckData to prompts.PitchDeckData
 	promptData := prompts.PitchDeckData{
@@ -562,294 +571,160 @@ func (s *PitchDeckService) generateMarkdown(data model.PitchDeckData, imagePaths
 		return "", fmt.Errorf("failed to generate prompt: %w", err)
 	}
 
-	// Gemini API request structure
-
-	type GeminiPart struct {
-		Text string `json:"text"`
-	}
-	type GeminiContent struct {
-		Parts []GeminiPart `json:"parts"`
-	}
-	type GeminiRequest struct {
-		Contents []GeminiContent `json:"contents"`
+	// Call the Infomaniak API with the prompt
+	apiKey := os.Getenv("INFOMANIAK_API_KEY")
+	productID := os.Getenv("INFOMANIAK_PRODUCT_ID")
+	if apiKey == "" || productID == "" {
+		return "", fmt.Errorf("missing Infomaniak API credentials")
 	}
 
-	requestPayload := GeminiRequest{
-		Contents: []GeminiContent{
+	infomaniakReq := InfomaniakRequest{
+		Model: "mistral24b",
+		Messages: []Message{
 			{
-				Parts: []GeminiPart{
-					{
-						Text: prompt,
-					},
-				},
+				Role:    "user",
+				Content: prompt,
 			},
 		},
+		Temperature: 0.7,
+		MaxTokens:   4000,
 	}
 
-	jsonData, err := json.Marshal(requestPayload)
+	jsonData, err := json.Marshal(infomaniakReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", err
 	}
 
-	// Gemini API endpoint for text generation (use gemini-1.5-flash-latest)
-	apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=%s", googleKey)
-
-	// Create and execute the HTTP request
+	apiURL := fmt.Sprintf("https://api.infomaniak.com/1/ai/%s/openai/chat/completions", productID)
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		log.Println("Error creating new request:", err)
+		return "", err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to execute request: %w", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+		return "", err
 	}
 
-	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("infomaniak API error: %s", string(body))
 	}
 
-	// Define the expected response structure
-	type GeminiResponse struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
+	var apiResponse struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	}
 
-	var geminiResponse GeminiResponse
-	err = json.Unmarshal(body, &geminiResponse)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w, body: %s", err, string(body))
+	if err := json.Unmarshal(body, &apiResponse); err != nil {
+		return "", err
 	}
 
-	// Extract the generated text
-	var markdown string
-	if len(geminiResponse.Candidates) > 0 && len(geminiResponse.Candidates[0].Content.Parts) > 0 {
-		markdown = geminiResponse.Candidates[0].Content.Parts[0].Text
-	} else {
-		return "", fmt.Errorf("no generated text found in response: %s", string(body))
+	if len(apiResponse.Choices) == 0 {
+		return "", fmt.Errorf("no response from API")
 	}
 
-	markdown = cleanMarpContent(markdown)
+	// // Gemini API request structure
+
+	// type GeminiPart struct {
+	// 	Text string `json:"text"`
+	// }
+	// type GeminiContent struct {
+	// 	Parts []GeminiPart `json:"parts"`
+	// }
+	// type GeminiRequest struct {
+	// 	Contents []GeminiContent `json:"contents"`
+	// }
+
+	// requestPayload := GeminiRequest{
+	// 	Contents: []GeminiContent{
+	// 		{
+	// 			Parts: []GeminiPart{
+	// 				{
+	// 					Text: prompt,
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// }
+
+	// jsonData, err := json.Marshal(requestPayload)
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to marshal request: %w", err)
+	// }
+
+	// // Gemini API endpoint for text generation (use gemini-1.5-flash-latest)
+	// apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=%s", googleKey)
+
+	// // Create and execute the HTTP request
+	// req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to create request: %w", err)
+	// }
+	// req.Header.Set("Content-Type", "application/json")
+
+	// client := &http.Client{}
+	// resp, err := client.Do(req)
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to execute request: %w", err)
+	// }
+	// defer resp.Body.Close()
+
+	// body, err := ioutil.ReadAll(resp.Body)
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to read response body: %w", err)
+	// }
+
+	// // Check response status
+	// if resp.StatusCode != http.StatusOK {
+	// 	return "", fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
+	// }
+
+	// // Define the expected response structure
+	// type GeminiResponse struct {
+	// 	Candidates []struct {
+	// 		Content struct {
+	// 			Parts []struct {
+	// 				Text string `json:"text"`
+	// 			} `json:"parts"`
+	// 		} `json:"content"`
+	// 	} `json:"candidates"`
+	// }
+
+	// var geminiResponse GeminiResponse
+	// err = json.Unmarshal(body, &geminiResponse)
+	// if err != nil {
+	// 	return "", fmt.Errorf("failed to unmarshal response: %w, body: %s", err, string(body))
+	// }
+
+	// // Extract the generated text
+	// var markdown string
+	// if len(geminiResponse.Candidates) > 0 && len(geminiResponse.Candidates[0].Content.Parts) > 0 {
+	// 	markdown = geminiResponse.Candidates[0].Content.Parts[0].Text
+	// } else {
+	// 	return "", fmt.Errorf("no generated text found in response: %s", string(body))
+	// }
+	marpContent := apiResponse.Choices[0].Message.Content
+
+	markdown := cleanMarpContent(marpContent)
 
 	log.Println("markdown", markdown)
 
 	return markdown, nil
 }
-
-// func (s *PitchDeckService) generateMarkdown(data model.PitchDeckData, imagePaths map[string]string) (string, error) {
-// 	// Call the Infomaniak API with the prompt
-// 	apiKey := os.Getenv("INFOMANIAK_API_KEY")
-// 	productID := os.Getenv("INFOMANIAK_PRODUCT_ID")
-// 	if apiKey == "" || productID == "" {
-// 		return "", fmt.Errorf("missing Infomaniak API credentials")
-// 	}
-
-// 	googleKey := os.Getenv("GEMINI_API_KEY")
-// 	if googleKey == "" {
-// 		return "", fmt.Errorf("missing Gemini API key")
-// 	}
-
-// 	// Convert model.PitchDeckData to prompts.PitchDeckData
-// 	promptData := prompts.PitchDeckData{
-// 		// Project Information
-// 		ProjectName: data.ProjectName,
-// 		BigIdea:     data.BigIdea,
-
-// 		// Market Analysis
-// 		Problem:           data.Problem,
-// 		TargetAudience:    data.TargetAudience,
-// 		ExistingSolutions: data.ExistingSolutions,
-
-// 		// Solution Details
-// 		Solution:        data.Solution,
-// 		Technology:      data.Technology,
-// 		Differentiators: data.Differentiators,
-// 		DevelopmentPlan: data.DevelopmentPlan,
-
-// 		// Investment Information
-// 		FundingAmount:       data.FundingAmount,
-// 		FundingUse:          data.FundingUse,
-// 		Valuation:           data.Valuation,
-// 		InvestmentStructure: data.InvestmentStructure,
-
-// 		// Market Opportunity
-// 		TAM:          data.TAM,
-// 		SAM:          data.SAM,
-// 		SOM:          data.SOM,
-// 		TargetNiche:  data.TargetNiche,
-// 		MarketTrends: data.MarketTrends,
-// 		Industry:     data.Industry,
-
-// 		// Team Information
-// 		WhyYou:            data.WhyYou,
-// 		TeamQualification: data.TeamQualification,
-
-// 		// Theme and Visual Settings
-// 		Theme: data.Theme,
-
-// 		// Image Paths
-// 		LogoPath:         imagePaths["logo"],
-// 		TeamPhotoPath:    imagePaths["team"],
-// 		DiagramPhotoPath: imagePaths["diagram"],
-// 	}
-
-// 	// Convert team members
-// 	var teamMembers []prompts.TeamMemberNew
-// 	for _, member := range data.TeamMembers {
-// 		teamMembers = append(teamMembers, prompts.TeamMemberNew{
-// 			Name:       member.Name,
-// 			Role:       member.Role,
-// 			Experience: member.Experience,
-// 		})
-// 	}
-// 	promptData.TeamMembers = teamMembers
-// 	// Set contact info
-// 	promptData.ContactInfo.Email = data.ContactInfo.Email
-// 	promptData.ContactInfo.LinkedIn = data.ContactInfo.Linkedin
-// 	promptData.ContactInfo.Socials = data.ContactInfo.Socials
-// 	promptData.KeyTakeaways = data.KeyTakeaways
-
-// 	// Generate the prompt using the template
-// 	prompt, err := prompts.GeneratePitchDeckPrompt(promptData)
-// 	if err != nil {
-// 		return "", fmt.Errorf("failed to generate prompt: %w", err)
-// 	}
-
-// 	geminiReq := map[string]interface{}{
-// 		"model": "gemini-1.5-flash",
-// 		"messages": []map[string]string{
-// 			{"role": "user", "content": prompt},
-// 		},
-// 		"temperature": 0.7,
-// 		"max_tokens":  4000,
-// 	}
-
-// 	jsonData, err := json.Marshal(geminiReq)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	// Call Gemini API
-// 	apiURL := "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateText?key=" + googleKey
-// 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
-// 	if err != nil {
-// 		return "", fmt.Errorf("failed to create request: %w", err)
-// 	}
-
-// 	req.Header.Set("Content-Type", "application/json")
-
-// 	client := &http.Client{}
-// 	resp, err := client.Do(req)
-// 	if err != nil {
-// 		return "", fmt.Errorf("failed to send request: %w", err)
-// 	}
-// 	defer resp.Body.Close()
-
-// 	var result struct {
-// 		Candidates []struct {
-// 			Output string `json:"output"`
-// 		} `json:"candidates"`
-// 	}
-
-// 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-// 		return "", fmt.Errorf("failed to decode response: %w", err)
-// 	}
-
-// 	if len(result.Candidates) == 0 {
-// 		return "", fmt.Errorf("no content generated")
-// 	}
-
-// 	markdown := result.Candidates[0].Output
-// 	markdown = cleanMarpContent(markdown)
-
-// 	// infomaniakReq := InfomaniakRequest{
-// 	// 	Model: "mistral24b",
-// 	// 	Messages: []Message{
-// 	// 		{
-// 	// 			Role:    "user",
-// 	// 			Content: prompt,
-// 	// 		},
-// 	// 	},
-// 	// 	Temperature: 0.7,
-// 	// 	MaxTokens:   4000,
-// 	// }
-
-// 	// jsonData, err := json.Marshal(infomaniakReq)
-// 	// if err != nil {
-// 	// 	return "", err
-// 	// }
-
-// 	// // Call Infomaniak API
-// 	// apiURL := fmt.Sprintf("https://api.infomaniak.com/1/ai/%s/openai/chat/completions", productID)
-// 	// req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
-// 	// if err != nil {
-// 	// 	return "", fmt.Errorf("failed to create request: %w", err)
-// 	// }
-
-// 	// req.Header.Set("Content-Type", "application/json")
-// 	// req.Header.Set("Authorization", "Bearer "+apiKey)
-
-// 	// client := &http.Client{}
-// 	// resp, err := client.Do(req)
-// 	// if err != nil {
-// 	// 	return "", fmt.Errorf("failed to send request: %w", err)
-// 	// }
-// 	// defer resp.Body.Close()
-
-// 	// var result struct {
-// 	// 	Choices []struct {
-// 	// 		Message struct {
-// 	// 			Content string `json:"content"`
-// 	// 		} `json:"message"`
-// 	// 	} `json:"choices"`
-// 	// }
-
-// 	// if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-// 	// 	return "", fmt.Errorf("failed to decode response: %w", err)
-// 	// }
-
-// 	// if len(result.Choices) == 0 {
-// 	// 	return "", fmt.Errorf("no content generated")
-// 	// }
-
-// 	// Get the generated markdown
-// 	// markdown := result.Choices[0].Message.Content
-// 	// markdown = cleanMarpContent(markdown)
-
-// 	return markdown, nil
-// }
-
-// Add this helper function
-
-// func cleanMarpContent(content string) string {
-// 	content = strings.TrimSpace(content)
-// 	if strings.HasPrefix(content, "```") && strings.HasSuffix(content, "```") {
-// 		lines := strings.Split(content, "\n")
-// 		if len(lines) > 2 {
-// 			firstLine := strings.ToLower(lines[0])
-// 			if strings.Contains(firstLine, "marp") || strings.Contains(firstLine, "markdown") {
-// 				return strings.Join(lines[1:len(lines)-1], "\n")
-// 			} else {
-// 				return content
-// 			}
-// 		}
-// 	}
-// 	return content
-// }
 
 // extractMarkdownContent extracts markdown content between triple backticks
 func cleanMarpContent(text string) string {
@@ -880,19 +755,6 @@ func cleanMarpContent(text string) string {
 	// If no backticks found, return the entire text
 	return text
 }
-
-// func cleanMarkdown(content string) string {
-// 	content = strings.TrimSpace(content)
-// 	// Remove markdown code block if present
-// 	if strings.HasPrefix(content, "```markdown") || strings.HasPrefix(content, "```marp") {
-// 		lines := strings.Split(content, "\n")
-// 		if len(lines) > 2 && strings.HasSuffix(content, "```") {
-// 			// Remove first and last line (the code block markers)
-// 			return strings.Join(lines[1:len(lines)-1], "\n")
-// 		}
-// 	}
-// 	return content
-// }
 
 func (s *PitchDeckService) insertImages(markdown string, imagePaths map[string]string) string {
 	// Insert logo on first slide
