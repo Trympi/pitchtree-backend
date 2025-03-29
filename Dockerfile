@@ -1,5 +1,5 @@
 # Étape de build
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -48,7 +48,7 @@ ENV CHROME_NO_SANDBOX=1
 RUN npm install -g @marp-team/marp-cli
 
 # Créer les répertoires nécessaires pour l'application
-# RUN mkdir -p /app/temp /app/outputs /app/uploads
+RUN mkdir -p /app/temp /app/outputs /app/uploads
 
 # Copier l'exécutable depuis l'étape de build
 COPY --from=builder /app/main .
